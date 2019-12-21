@@ -7192,8 +7192,7 @@ performMemberLookup(ConstraintKind constraintKind, DeclNameRef memberName,
     // anything else, because the cost of the general search is so
     // high.
     if (auto info = getArgumentInfo(memberLocator)) {
-      memberName.getFullName() = DeclName(ctx, memberName.getBaseName(),
-                                          info->Labels);
+      memberName = memberName.withArgumentLabels(ctx, info->Labels);
     }
   }
 
