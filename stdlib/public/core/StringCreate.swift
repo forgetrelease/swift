@@ -17,23 +17,54 @@ internal func _allASCII(_ input: UnsafeBufferPointer<UInt8>) -> Bool {
 
   // NOTE: Avoiding for-in syntax to avoid bounds checks
   //
-  // TODO(String performance): SIMD-ize
-  //
   let ptr = input.baseAddress._unsafelyUnwrappedUnchecked
   var i = 0
 
   let count = input.count
   let stride = MemoryLayout<UInt>.stride
+  let stride4 = stride * 4
   let address = Int(bitPattern: ptr)
 
   let wordASCIIMask = UInt(truncatingIfNeeded: 0x8080_8080_8080_8080 as UInt64)
-  let byteASCIIMask = UInt8(truncatingIfNeeded: wordASCIIMask)
+  let byteASCIIMask = UInt8(truncatingIfNeeded: 0x80 as UInt8)
+  let simd4ASCIIMask = SIMD4<UInt>(repeating: wordASCIIMask)
+  let simd4Zero = SIMD4<UInt>(repeating: 0)
 
+  // Bytes up to beginning of a word
   while (address &+ i) % stride != 0 && i < count {
     guard ptr[i] & byteASCIIMask == 0 else { return false }
     i &+= 1
   }
 
+  // Words up to beginning of a 4-word
+  while (address &+ i) % stride4 != 0 && (i &+ stride) <= count {
+    let word: UInt = UnsafePointer(
+      bitPattern: address &+ i
+    )._unsafelyUnwrappedUnchecked.pointee
+    guard word & wordASCIIMask == 0 else { return false }
+    i &+= stride
+  }
+
+  // Full 4-words
+  while (i &+ stride4) <= count {
+    let word0: UInt = UnsafePointer(
+      bitPattern: address &+ i + 0
+    )._unsafelyUnwrappedUnchecked.pointee
+    let word1: UInt = UnsafePointer(
+      bitPattern: address &+ i + 1
+    )._unsafelyUnwrappedUnchecked.pointee
+    let word2: UInt = UnsafePointer(
+      bitPattern: address &+ i + 2
+    )._unsafelyUnwrappedUnchecked.pointee
+    let word3: UInt = UnsafePointer(
+      bitPattern: address &+ i + 3
+    )._unsafelyUnwrappedUnchecked.pointee
+    let simd4 = SIMD4<UInt>(word0, word1, word2, word3)
+    guard simd4 & simd4ASCIIMask == simd4Zero else { return false }
+    i &+= stride4
+  }
+
+  // Full words
   while (i &+ stride) <= count {
     let word: UInt = UnsafePointer(
       bitPattern: address &+ i
@@ -42,6 +73,7 @@ internal func _allASCII(_ input: UnsafeBufferPointer<UInt8>) -> Bool {
     i &+= stride
   }
 
+  // Rest bytes up to end
   while i < count {
     guard ptr[i] & byteASCIIMask == 0 else { return false }
     i &+= 1
