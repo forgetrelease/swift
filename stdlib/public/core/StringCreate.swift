@@ -17,6 +17,12 @@ internal func _allASCII(_ input: UnsafeBufferPointer<UInt8>) -> Bool {
 
   // NOTE: Avoiding for-in syntax to avoid bounds checks
   //
+  // TODO(String performance): please remove this SIMD-ization when Swift compiler will be smart enough
+  // to vectorize this simple loop on its own:
+  // for i in 0..<count where ptr[i] & byteASCIIMask != 0 {
+  //   return false
+  // }
+
   let ptr = input.baseAddress._unsafelyUnwrappedUnchecked
   var i = 0
 
