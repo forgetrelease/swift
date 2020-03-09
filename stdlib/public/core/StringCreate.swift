@@ -22,7 +22,8 @@ internal func _allASCII(_ input: UnsafeBufferPointer<UInt8>) -> Bool {
 
   let count = input.count
   let stride = MemoryLayout<UInt>.stride
-  let stride4 = stride * 4
+  let simd4UintStride = MemoryLayout<SIMD4<UInt>>.stride
+  assert(simd4UintStride == stride * 4) // Memory layout of SIMD4<UInt> should match one of 4 UInt words
   let address = Int(bitPattern: ptr)
 
   let wordASCIIMask = UInt(truncatingIfNeeded: 0x8080_8080_8080_8080 as UInt64)
@@ -37,7 +38,7 @@ internal func _allASCII(_ input: UnsafeBufferPointer<UInt8>) -> Bool {
   }
 
   // Words up to beginning of a 4-word
-  while (address &+ i) % stride4 != 0 && (i &+ stride) <= count {
+  while (address &+ i) % simd4UintStride != 0 && (i &+ stride) <= count {
     let word: UInt = UnsafePointer(
       bitPattern: address &+ i
     )._unsafelyUnwrappedUnchecked.pointee
@@ -46,22 +47,12 @@ internal func _allASCII(_ input: UnsafeBufferPointer<UInt8>) -> Bool {
   }
 
   // Full 4-words
-  while (i &+ stride4) <= count {
-    let word0: UInt = UnsafePointer(
-      bitPattern: address &+ i + 0
+  while (i &+ simd4UintStride) <= count {
+    let simd4: SIMD4<UInt> = UnsafePointer<SIMD4<UInt>>(
+      bitPattern: address &+ i
     )._unsafelyUnwrappedUnchecked.pointee
-    let word1: UInt = UnsafePointer(
-      bitPattern: address &+ i + 1
-    )._unsafelyUnwrappedUnchecked.pointee
-    let word2: UInt = UnsafePointer(
-      bitPattern: address &+ i + 2
-    )._unsafelyUnwrappedUnchecked.pointee
-    let word3: UInt = UnsafePointer(
-      bitPattern: address &+ i + 3
-    )._unsafelyUnwrappedUnchecked.pointee
-    let simd4 = SIMD4<UInt>(word0, word1, word2, word3)
     guard simd4 & simd4ASCIIMask == simd4Zero else { return false }
-    i &+= stride4
+    i &+= simd4UintStride
   }
 
   // Full words
