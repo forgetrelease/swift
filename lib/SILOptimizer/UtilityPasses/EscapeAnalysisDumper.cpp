@@ -72,15 +72,20 @@ class EscapeAnalysisDumper : public SILModuleTransform {
             if (auto fas = FullApplySite::isa(&ii)) {
               for (unsigned i = 0, e = Values.size(); i != e; ++i) {
                 SILValue val = Values[i];
-                bool escape = EA->canEscapeTo(val, fas);
-                llvm::outs() << (escape ? "May" : "No") << "Escape: " << val
-                             << " to " << ii;
+                bool escape = EA->canEscapeToRelease(val, fas);
+                llvm::outs() << (escape ? "May" : "No")
+                             << "EscapeToRelease: " << val << " to " << ii;
+                if (!escape) {
+                  bool escape = EA->canEscapeToAccess(val, fas);
+                  llvm::outs() << (escape ? "May" : "No")
+                               << "EscapeToAccess: " << val << " to " << ii;
+                }
               }
             }
             if (RefCountingInst *rci = dyn_cast<RefCountingInst>(&ii)) {
               for (unsigned i = 0, e = Values.size(); i != e; ++i) {
                 SILValue val = Values[i];
-                bool escape = EA->canEscapeTo(val, rci);
+                bool escape = EA->canEscapeToRelease(val, rci);
                 llvm::outs() << (escape ? "May" : "No") << "Escape: " << val
                              << " to " << ii;
               }
