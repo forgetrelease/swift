@@ -40,8 +40,7 @@ extension ModuleSelectorTestingKit::A: Swift::Equatable {
       // FIXME: it'd be nice to handle module selectors on operators.
 
     let magnitude: Int.Swift::Magnitude = main::magnitude
-    // FIXME incorrect: expected-error@-1 {{variable used within its own initial value}}
-    // expected-EVENTUALLY-error@-1 {{something about type mismatch between 'Never' and 'Int.Swift::Magnitude'}}
+    // expected-error@-1 {{cannot convert value of type 'Never' to specified type 'Int.Magnitude' (aka 'UInt')}}
 
     if Swift::Bool.Swift::random() {
       self.ModuleSelectorTestingKit::negate()
@@ -100,7 +99,6 @@ extension B: main::Equatable {
     let magnitude: Int.main::Magnitude = main::magnitude
     // expected-error@-1 {{type 'Magnitude' is not imported through module 'main'}}
     // expected-note@-2 {{did you mean module 'Swift'?}} {{24-28=Swift}}
-    // FIXME incorrect: expected-error@-3 {{variable used within its own initial value}}
 
     if main::Bool.main::random() {
     // expected-error@-1 {{declaration 'Bool' is not imported through module 'main'}}
@@ -163,7 +161,6 @@ extension ModuleSelectorTestingKit::C: ModuleSelectorTestingKit::Equatable {
     let magnitude: Int.ModuleSelectorTestingKit::Magnitude = ModuleSelectorTestingKit::magnitude
     // expected-error@-1 {{type 'Magnitude' is not imported through module 'ModuleSelectorTestingKit'}}
     // expected-note@-2 {{did you mean module 'Swift'?}} {{24-48=Swift}}
-    // FIXME incorrect: expected-error@-3 {{variable used within its own initial value}}
 
     if ModuleSelectorTestingKit::Bool.ModuleSelectorTestingKit::random() {
     // expected-error@-1 {{declaration 'Bool' is not imported through module 'ModuleSelectorTestingKit'}}
@@ -193,7 +190,7 @@ extension Swift::D {}
 // expected-note@-2 {{did you mean module 'ModuleSelectorTestingKit'?}} {{11-16=ModuleSelectorTestingKit}}
 
 extension D: Swift::Equatable {
-// FIXME wat: expected-error@-1 *{{implementation of 'Equatable' cannot be automatically synthesized in an extension in a different file to the type}}
+// FIXME wat: expected-error@-1 *{{extension outside of file declaring struct 'D' prevents automatic synthesis of '==' for protocol 'Equatable'}}
 
   @_implements(Swift::Equatable, Swift::==(_:_:))
   // expected-error@-1 {{name cannot be qualified with module selector here}} {{34-41=}}
@@ -220,8 +217,8 @@ extension D: Swift::Equatable {
       // expected-error@-2 {{expected expression}}
       // expected-error@-3 {{expected expression after operator}}
     let magnitude: Int.Swift::Magnitude = Swift::magnitude
-    // expected-EVENTUALLY-error@-1 {{something about not finding 'magnitude' because we didn't look in self}}
-    // FIXME: expected-error@-2 {{variable used within its own initial value}}
+    // expected-error@-1 {{declaration 'magnitude' is not imported through module 'Swift'}}
+    // FIXME should be un-addressable via main: expected-note@-2 {{did you mean module 'main'?}}
     if Swift::Bool.Swift::random() {
       Swift::negate()
       // expected-error@-1 {{declaration 'negate' is not imported through module 'Swift'}}
@@ -468,7 +465,7 @@ func badModuleNames() {
   // FIXME improve: expected-error@-1 {{value of type 'String' has no member 'NonexistentModule::count'}}
 
   let x: NonexistentModule::MyType = NonexistentModule::MyType()
-  // expected-error@-1 {{use of undeclared type 'NonexistentModule::MyType'}}
+  // expected-error@-1 {{cannot find type 'NonexistentModule::MyType' in scope}}
 
   let y: A.NonexistentModule::MyChildType = fatalError()
   // expected-error@-1 {{'NonexistentModule::MyChildType' is not a member type of 'A'}}
