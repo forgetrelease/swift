@@ -37,7 +37,7 @@ extension ModuleSelectorTestingKit::A: Swift::Equatable {
   mutating func myNegate() {
     let fn: (Swift::Int, Swift::Int) -> Swift::Int =
       (+)
-      // FIXME: it'd be nice to handle module selectors on operators.
+      // TODO: it'd be nice to handle module selectors on operators.
 
     let magnitude: Int.Swift::Magnitude = main::magnitude
     // expected-error@-1 {{cannot convert value of type 'Never' to specified type 'Int.Magnitude' (aka 'UInt')}}
@@ -92,7 +92,7 @@ extension B: main::Equatable {
     // expected-note@-3 {{did you mean module 'Swift'?}} {{25-29=Swift}}
     // expected-note@-4 {{did you mean module 'Swift'?}} {{39-43=Swift}}
       (main::+)
-      // FIXME: it'd be nice to handle module selectors on operators.
+      // TODO: it'd be nice to handle module selectors on operators.
       // expected-error@-2 {{expected expression}}
       // expected-error@-3 {{expected expression after operator}}
 
@@ -154,7 +154,7 @@ extension ModuleSelectorTestingKit::C: ModuleSelectorTestingKit::Equatable {
     // expected-note@-3 {{did you mean module 'Swift'?}} {{45-69=Swift}}
     // expected-note@-4 {{did you mean module 'Swift'?}} {{79-103=Swift}}
       (ModuleSelectorTestingKit::+)
-      // FIXME: it'd be nice to handle module selectors on operators.
+      // TODO: it'd be nice to handle module selectors on operators.
       // expected-error@-2 {{expected expression}}
       // expected-error@-3 {{expected expression after operator}}
 
@@ -211,11 +211,11 @@ extension D: Swift::Equatable {
   // FIXME improve: expected-note@-1 {{did you mean 'myNegate'?}}
 
     let fn: (Swift::Int, Swift::Int) -> Swift::Int =
-    // FIXME:
       (Swift::+)
-      // expected-error@-1 {{cannot convert value of type '()' to specified type '(Int, Int) -> Int'}}
-      // expected-error@-2 {{expected expression}}
-      // expected-error@-3 {{expected expression after operator}}
+      // TODO: it'd be nice to handle module selectors on operators.
+      // expected-error@-2 {{cannot convert value of type '()' to specified type '(Int, Int) -> Int'}}
+      // expected-error@-3 {{expected expression}}
+      // expected-error@-4 {{expected expression after operator}}
     let magnitude: Int.Swift::Magnitude = Swift::magnitude
     // expected-error@-1 {{declaration 'magnitude' is not imported through module 'Swift'}}
     // FIXME should be un-addressable via main: expected-note@-2 {{did you mean module 'main'?}}
@@ -253,7 +253,7 @@ struct AvailableUser {
 }
 
 func builderUser2(@main::MyBuilder fn: () -> Void) {}
-// FIXME improve: expected-error@-1 {{unknown attribute 'MyBuilder'}}
+// FIXME should succeed: expected-error@-1 {{unknown attribute 'MyBuilder'}}
 
 func builderUser3(@ModuleSelectorTestingKit::MyBuilder fn: () -> Void) {}
 // no-error
@@ -463,6 +463,7 @@ func badModuleNames() {
 
   _ = "foo".NonexistentModule::count
   // FIXME improve: expected-error@-1 {{value of type 'String' has no member 'NonexistentModule::count'}}
+  // FIXME: expected-EVENTUALLY-note@-2 {{did you mean module 'Swift'?}} {{13-30=Swift}}
 
   let x: NonexistentModule::MyType = NonexistentModule::MyType()
   // expected-error@-1 {{cannot find type 'NonexistentModule::MyType' in scope}}
