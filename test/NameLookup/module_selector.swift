@@ -123,11 +123,11 @@ extension B: main::Equatable {
 
 // Test resolution of ModuleSelectorTestingKit:: using `C`
 
-extension C {}
+extension ModuleSelectorTestingKit::C {}
 
-extension ModuleSelectorTestingKit::C: ModuleSelectorTestingKit::Equatable {
+extension C: ModuleSelectorTestingKit::Equatable {
 // expected-error@-1 {{type 'Equatable' is not imported through module 'ModuleSelectorTestingKit'}}
-// expected-note@-2 {{did you mean module 'Swift'?}} {{40-64=Swift}}
+// expected-note@-2 {{did you mean module 'Swift'?}} {{14-38=Swift}}
 
   @_implements(ModuleSelectorTestingKit::Equatable, ModuleSelectorTestingKit::==(_:_:))
   // expected-error@-1 {{name cannot be qualified with module selector here}} {{53-79=}}
