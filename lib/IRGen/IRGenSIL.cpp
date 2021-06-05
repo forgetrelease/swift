@@ -4740,11 +4740,6 @@ void IRGenSILFunction::visitDebugValueInst(DebugValueInst *i) {
     return;
 
   IndirectionKind Indirection = DirectValue;
-  if (CurSILFn->isAsync() && !i->getDebugScope()->InlinedCallSite &&
-      (Copy.empty() || !isa<llvm::Constant>(Copy[0]))) {
-    Indirection = CoroDirectValue;
-  }
-
   emitDebugVariableDeclaration(Copy, DbgTy, SILTy, i->getDebugScope(),
                                i->getDecl(), *VarInfo, Indirection);
 }
@@ -4772,7 +4767,6 @@ void IRGenSILFunction::visitDebugValueAddrInst(DebugValueAddrInst *i) {
   SILType SILTy = SILVal->getType();
   auto RealType = SILTy.getASTType();
   if (CurSILFn->isAsync() && !i->getDebugScope()->InlinedCallSite) {
-    Indirection = CoroIndirectValue;
     if (auto *PBI = dyn_cast<ProjectBoxInst>(i->getOperand())) {
       // Usually debug info only ever describes the *result* of a projectBox
       // call. To allow the debugger to display a boxed parameter of an async
