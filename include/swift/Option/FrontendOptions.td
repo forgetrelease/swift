@@ -427,6 +427,10 @@ def suppress_static_exclusivity_swap : Flag<["-"], "suppress-static-exclusivity-
 def enable_sil_opaque_values : Flag<["-"], "enable-sil-opaque-values">,
   HelpText<"Enable SIL Opaque Values">;
   
+def enable_experimental_module_selector :
+  Flag<["-"], "enable-experimental-module-selector">,
+  HelpText<"Enable experimental 'Module::name' syntax">;
+
 def enable_experimental_static_assert :
   Flag<["-"], "enable-experimental-static-assert">,
   HelpText<"Enable experimental #assert">;

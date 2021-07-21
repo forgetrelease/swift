@@ -292,6 +292,9 @@ namespace swift {
     /// language modes.
     bool WarnConcurrency = false;
 
+    /// Enable experimental 'Module::name' syntax.
+    bool EnableExperimentalModuleSelector = false;
+
     /// Enable experimental #assert feature.
     bool EnableExperimentalStaticAssert = false;
 
