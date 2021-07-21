@@ -233,6 +233,7 @@ SYNTAX_TOKENS = [
     Punctuator('Ellipsis', 'ellipsis', text='...', serialization_code=118),
     Punctuator('Colon', 'colon', text=':', requires_trailing_space=True,
                serialization_code=82),
+    Punctuator('ColonColon', 'colon_colon', text='::', serialization_code=124),
     Punctuator('Semicolon', 'semi', text=';', serialization_code=83),
     Punctuator('Equal', 'equal', text='=', requires_leading_space=True,
                requires_trailing_space=True, serialization_code=86),
