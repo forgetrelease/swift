@@ -1,8 +1,5 @@
 // RUN: %target-typecheck-verify-swift -sdk %clang-importer-sdk -module-name main -I %S/Inputs -enable-experimental-module-selector
 
-// FIXME: This only works with ASTScopes, and we might not care about that by the time this feature is ready.
-// RUN-DISABLED: %target-typecheck-verify-swift -sdk %clang-importer-sdk -module-name main -I %S/Inputs -enable-experimental-module-selector -disable-astscope-lookup
-
 // Make sure the lack of the experimental flag disables the feature:
 // RUN: not %target-typecheck-verify-swift -sdk %clang-importer-sdk -module-name main -I %S/Inputs 2>/dev/null
 
@@ -11,7 +8,7 @@
 // * Whether X::foo finds foos in X's re-exports
 // * Whether we handle access paths correctly
 // * Interaction with ClangImporter
-// * Cross-module overlays, when those happen
+// * Cross-import overlays
 //
 // It also might not cover all combinations of name lookup paths and inputs.
 
@@ -265,37 +262,37 @@ func builderUser4(@Swift::MyBuilder fn: () -> Void) {}
 
 func whitespace() {
   Swift::print
-  // expected-error@-1 {{expression resolves to an unused function}}
+  // expected-error@-1 {{function is unused}}
 
   Swift:: print
-  // expected-error@-1 {{expression resolves to an unused function}}
+  // expected-error@-1 {{function is unused}}
 
   Swift ::print
-  // expected-error@-1 {{expression resolves to an unused function}}
+  // expected-error@-1 {{function is unused}}
 
   Swift :: print
-  // expected-error@-1 {{expression resolves to an unused function}}
+  // expected-error@-1 {{function is unused}}
 
   Swift::
   print
-  // expected-error@-1 {{expression resolves to an unused function}}
+  // expected-error@-1 {{function is unused}}
 
   Swift
   ::print
-  // expected-error@-1 {{expression resolves to an unused function}}
+  // expected-error@-1 {{function is unused}}
 
   Swift ::
   print
-  // expected-error@-1 {{expression resolves to an unused function}}
+  // expected-error@-1 {{function is unused}}
 
   Swift
   :: print
-  // expected-error@-1 {{expression resolves to an unused function}}
+  // expected-error@-1 {{function is unused}}
 
   Swift
   ::
   print
-  // expected-error@-1 {{expression resolves to an unused function}}
+  // expected-error@-1 {{function is unused}}
 }
 
 // Error cases
@@ -471,5 +468,5 @@ func badModuleNames() {
   // expected-error@-1 {{cannot find type 'NonexistentModule::MyType' in scope}}
 
   let y: A.NonexistentModule::MyChildType = fatalError()
-  // expected-error@-1 {{'NonexistentModule::MyChildType' is not a member type of 'A'}}
+  // expected-error@-1 {{'NonexistentModule::MyChildType' is not a member type of struct 'ModuleSelectorTestingKit.A'}}
 }
