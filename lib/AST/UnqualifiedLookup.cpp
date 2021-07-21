@@ -274,8 +274,9 @@ void UnqualifiedLookupFactory::performUnqualifiedLookup() {
                                   DC->getParentSourceFile());
 
   if (Loc.isValid() && DC->getParentSourceFile()) {
-    // Operator lookup is always global, for the time being.
-    if (!Name.isOperator())
+    // Operator lookup is always global, for the time being. Unqualified lookups
+    // with module selectors always start at global scope.
+    if (!Name.isOperator() && !Name.hasModuleSelector())
       lookInASTScopes();
   } else {
     assert((DC->isModuleScopeContext() || !DC->getParentSourceFile()) &&
