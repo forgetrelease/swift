@@ -470,8 +470,15 @@ func badModuleNames() {
   let y: A.NonexistentModule::MyChildType = fatalError()
   // expected-error@-1 {{'NonexistentModule::MyChildType' is not a member type of struct 'ModuleSelectorTestingKit.A'}}
 }
+
+@_spi(main::Private)
+// expected-error@-1 {{name of SPI group declaration cannot be qualified with module selector}} {{7-13=}}
 public struct BadImplementsAttr: CustomStringConvertible {
   @_implements(CustomStringConvertible, Swift::description)
   // expected-error@-1 {{name cannot be qualified with module selector here}} {{41-48=}}
   public var stringValue: String { fatalError() }
+
+  @_specialize(spi: main::Private, where T == Swift::Int)
+  // expected-error@-1 {{name of SPI group declaration cannot be qualified with module selector}} {{21-27=}}
+  public func fn<T>() -> T { fatalError() }
 }

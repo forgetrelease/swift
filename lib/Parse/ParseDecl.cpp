@@ -686,6 +686,7 @@ bool Parser::parseSpecializeAttributeArguments(
           consumeToken();
           return false;
         }
+        diagnoseAndConsumeIfModuleSelector("SPI group");
         auto text = Tok.getText();
         spiGroups.push_back(Context.getIdentifier(text));
         consumeToken();
@@ -1860,6 +1861,8 @@ bool Parser::parseNewDeclAttribute(DeclAttributes &Attributes, SourceLoc AtLoc,
       consumeIf(tok::r_paren);
       return false;
     }
+
+    diagnoseAndConsumeIfModuleSelector("SPI group");
 
     auto text = Tok.getText();
     spiGroups.push_back(Context.getIdentifier(text));
