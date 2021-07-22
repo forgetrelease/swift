@@ -232,7 +232,7 @@ extension D: Swift::Equatable {
       // expected-error@-4 {{expected expression after operator}}
     let magnitude: Int.Swift::Magnitude = Swift::magnitude
     // expected-error@-1 {{declaration 'magnitude' is not imported through module 'Swift'}}
-    // FIXME should be un-addressable via main: expected-note@-2 {{did you mean module 'main'?}}
+    // expected-note@-2 {{did you mean module 'main'?}}
     if Swift::Bool.Swift::random() {
       Swift::negate()
       // expected-error@-1 {{declaration 'negate' is not imported through module 'Swift'}}
@@ -255,6 +255,17 @@ extension D: Swift::Equatable {
   }
 
   // FIXME: Can we test @convention(witness_method:)?
+}
+
+let mog: Never = fatalError()
+
+func localVarsCantBeAccessedByModuleSelector() {
+  let mag: Int.Swift::Magnitude = main::mag
+  // expected-error@-1 {{declaration 'mag' is not imported through module 'main'}}
+  // expected-note@-2 {{did you mean the local declaration?}} {{35-41=}}
+
+  let mog: Never = main::mog
+  // no-error
 }
 
 struct AvailableUser {

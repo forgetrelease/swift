@@ -728,12 +728,12 @@ public:
   ///
   /// \param stopAfterInnermostBraceStmt If lookup should consider
   /// local declarations inside the innermost syntactic scope only.
-  static void lookupLocalDecls(SourceFile *, DeclName, SourceLoc,
+  static void lookupLocalDecls(SourceFile *, DeclNameRef, SourceLoc,
                                bool stopAfterInnermostBraceStmt,
                                SmallVectorImpl<ValueDecl *> &);
 
   /// Returns the result if there is exactly one, nullptr otherwise.
-  static ValueDecl *lookupSingleLocalDecl(SourceFile *, DeclName, SourceLoc);
+  static ValueDecl *lookupSingleLocalDecl(SourceFile *, DeclNameRef, SourceLoc);
 
   /// Entry point to record the visible statement labels from the given
   /// point.

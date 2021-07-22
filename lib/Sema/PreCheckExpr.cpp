@@ -406,7 +406,8 @@ Expr *TypeChecker::resolveDeclRefExpr(UnresolvedDeclRefExpr *UDRE,
     }
 
     DeclName lookupName(context, Name.getBaseName(), lookupLabels);
-    LookupName = DeclNameRef(lookupName);
+    LookupName = DeclNameRef(DC->getASTContext(), Name.getModuleSelector(),
+                             lookupName);
   }
 
   auto errorResult = [&]() -> Expr * {
@@ -432,8 +433,7 @@ Expr *TypeChecker::resolveDeclRefExpr(UnresolvedDeclRefExpr *UDRE,
   // First, look for a local binding in scope.
   if (Loc.isValid() && !Name.isOperator() && !Name.hasModuleSelector()) {
     SmallVector<ValueDecl *, 2> localDecls;
-    ASTScope::lookupLocalDecls(DC->getParentSourceFile(),
-                               LookupName.getFullName(), Loc,
+    ASTScope::lookupLocalDecls(DC->getParentSourceFile(), LookupName, Loc,
                                /*stopAfterInnermostBraceStmt=*/false,
                                ResultValues);
     for (auto *localDecl : ResultValues) {
@@ -524,7 +524,8 @@ Expr *TypeChecker::resolveDeclRefExpr(UnresolvedDeclRefExpr *UDRE,
             // It's just something we need to pick up contextually.
             if (decl->getDeclContext()->getLocalContext())
               decl->diagnose(diag::note_remove_module_selector)
-                  .fixItRemove(moduleSelectorLoc);
+                  .fixItRemoveChars(moduleSelectorLoc,
+                                    UDRE->getNameLoc().getBaseNameLoc());
 
             if (decl->isInstanceMember())
               Context.Diags.diagnose(moduleSelectorLoc,
@@ -1090,8 +1091,9 @@ namespace {
 
       // Do an actual lookup for 'self' in case it shows up in a capture list.
       auto *methodSelf = methodContext->getImplicitSelfDecl();
-      auto *lookupSelf = ASTScope::lookupSingleLocalDecl(DC->getParentSourceFile(),
-                                                         Ctx.Id_self, Loc);
+      auto *lookupSelf =
+          ASTScope::lookupSingleLocalDecl(DC->getParentSourceFile(),
+                                          DeclNameRef(Ctx.Id_self), Loc);
       if (lookupSelf && lookupSelf != methodSelf) {
         // FIXME: This is the wrong diagnostic for if someone manually declares a
         // variable named 'self' using backticks.

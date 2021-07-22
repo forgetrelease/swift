@@ -2557,7 +2557,7 @@ namespace {
             if (name.isSimpleName() && loc.isValid()) {
               auto *varDecl = dyn_cast_or_null<VarDecl>(
                 ASTScope::lookupSingleLocalDecl(cs.DC->getParentSourceFile(),
-                                                name.getFullName(), loc));
+                                                name, loc));
               if (varDecl)
                 if (auto varType = cs.getTypeIfAvailable(varDecl))
                   varType->getTypeVariables(varRefs);
