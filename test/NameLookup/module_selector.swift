@@ -84,8 +84,8 @@ extension B: main::Equatable {
   // @_derivative(of:)
   
   @_dynamicReplacement(for: main::negate())
-  // FIXME shouldn't this succeed?: expected-error@-1 {{replaced function 'main::negate()' could not be found}}
-  // FIXME: expected-note@-2 {{did you mean module 'ModuleSelectorTestingKit'?}} {{29-33=ModuleSelectorTestingKit}}
+  // expected-error@-1 {{replaced function 'main::negate()' could not be found}}
+  // expected-note@-2 {{did you mean module 'ModuleSelectorTestingKit'?}} {{29-33=ModuleSelectorTestingKit}}
   mutating func myNegate() {
     let fn: (main::Int, main::Int) -> main::Int =
     // expected-error@-1 3{{type 'Int' is not imported through module 'main'}}
