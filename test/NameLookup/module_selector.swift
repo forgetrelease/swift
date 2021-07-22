@@ -50,6 +50,8 @@ extension ModuleSelectorTestingKit::A: Swift::Equatable {
     }
 
     self.main::myNegate()
+
+    Swift::fatalError()
   }
 
   // FIXME: Can we test @convention(witness_method:)?
@@ -75,9 +77,7 @@ extension B: main::Equatable {
   // expected-note@-3 {{did you mean module 'ModuleSelectorTestingKit'?}} {{44-48=ModuleSelectorTestingKit}}
   // expected-error@-4 {{type 'Bool' is not imported through module 'main'}}
   // expected-note@-5 {{did you mean module 'Swift'?}} {{56-60=Swift}}
-    main::fatalError()
-    // expected-EVENTUALLY-error@-1 {{declaration 'fatalError' is not imported through module 'main'}}
-    // expected-EVENTUALLY-note@-2 {{did you mean module 'Swift'?}} {{4-8=Swift}}
+    main::fatalError()    // no-error: body not typechecked
   }
 
   // FIXME: Add tests with autodiff @_differentiable(jvp:vjp:) and
@@ -119,6 +119,10 @@ extension B: main::Equatable {
     }
     
     self.main::myNegate()
+
+    main::fatalError()
+    // expected-error@-1 {{declaration 'fatalError' is not imported through module 'main'}}
+    // expected-note@-2 {{did you mean module 'Swift'?}} {{5-9=Swift}}
   }
 
   // FIXME: Can we test @convention(witness_method:)?
@@ -140,9 +144,7 @@ extension C: ModuleSelectorTestingKit::Equatable {
   public static func equals(_: ModuleSelectorTestingKit::C, _: ModuleSelectorTestingKit::C) -> ModuleSelectorTestingKit::Bool {
   // expected-error@-1 {{type 'Bool' is not imported through module 'ModuleSelectorTestingKit'}}
   // expected-note@-2 {{did you mean module 'Swift'?}} {{96-120=Swift}}
-    ModuleSelectorTestingKit::fatalError()
-    // expected-EVENTUALLY-error@-1 {{declaration 'fatalError' is not imported through module 'ModuleSelectorTestingKit'}}
-    // expected-EVENTUALLY-note@-2 {{did you mean module 'Swift'?}} {{4-8=Swift}}
+    ModuleSelectorTestingKit::fatalError()    // no-error: body not typechecked
   }
 
   // FIXME: Add tests with autodiff @_differentiable(jvp:vjp:) and
@@ -184,6 +186,10 @@ extension C: ModuleSelectorTestingKit::Equatable {
     self.ModuleSelectorTestingKit::myNegate()
     // expected-error@-1 {{declaration 'myNegate()' is not imported through module 'ModuleSelectorTestingKit'}}
     // expected-note@-2 {{did you mean module 'main'?}} {{10-34=main}}
+
+    ModuleSelectorTestingKit::fatalError()
+    // expected-error@-1 {{declaration 'fatalError' is not imported through module 'ModuleSelectorTestingKit'}}
+    // expected-note@-2 {{did you mean module 'Swift'?}} {{5-29=Swift}}
   }
 
   // FIXME: Can we test @convention(witness_method:)?
@@ -244,6 +250,8 @@ extension D: Swift::Equatable {
     self.Swift::myNegate()
     // expected-error@-1 {{declaration 'myNegate()' is not imported through module 'Swift'}}
     // expected-note@-2 {{did you mean module 'main'?}} {{10-15=main}}
+
+    Swift::fatalError()
   }
 
   // FIXME: Can we test @convention(witness_method:)?
