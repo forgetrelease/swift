@@ -203,7 +203,7 @@ extension Swift::D {}
 // expected-note@-2 {{did you mean module 'ModuleSelectorTestingKit'?}} {{11-16=ModuleSelectorTestingKit}}
 
 extension D: Swift::Equatable {
-// FIXME wat: expected-error@-1 *{{extension outside of file declaring struct 'D' prevents automatic synthesis of '==' for protocol 'Equatable'}}
+// Caused by Swift::D failing to typecheck in `equals(_:_:)`: expected-error@-1 *{{extension outside of file declaring struct 'D' prevents automatic synthesis of '==' for protocol 'Equatable'}}
 
   @_implements(Swift::Equatable, Swift::==(_:_:))
   // expected-error@-1 {{name cannot be qualified with module selector here}} {{34-41=}}
