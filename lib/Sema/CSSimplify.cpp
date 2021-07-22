@@ -7719,34 +7719,53 @@ performMemberLookup(ConstraintKind constraintKind, DeclNameRef memberName,
   }
 
   // If we have no viable or unviable candidates, and we're generating,
-  // diagnostics, rerun the query with inaccessible members included, so we can
-  // include them in the unviable candidates list.
+  // diagnostics, rerun the query with various excluded members included, so we
+  // can include them in the unviable candidates list.
   if (result.ViableCandidates.empty() && result.UnviableCandidates.empty() &&
       includeInaccessibleMembers) {
+    auto addExcludedChoices = [&](LookupResult &lookup,
+                                  MemberLookupResult::UnviableReason reason) {
+      for (auto entry : lookup) {
+        auto *cand = entry.getValueDecl();
+
+        // If the result is invalid, skip it.
+        if (cand->isInvalid()) {
+          result.markErrorAlreadyDiagnosed();
+          return false;
+        }
+
+        if (excludedDynamicMembers.count(cand))
+          continue;
+
+        result.addUnviable(getOverloadChoice(cand, /*isBridged=*/false,
+                                             /*isUnwrappedOptional=*/false),
+                           reason);
+      }
+      return true;
+    };
+
+    // Look for members that were excluded because of a module selector.
+    if (memberName.hasModuleSelector()) {
+      DeclNameRef unqualifiedMemberName{memberName.getFullName()};
+
+      NameLookupOptions lookupOptions = defaultMemberLookupOptions;
+      auto lookup =
+          TypeChecker::lookupMember(DC, instanceTy, unqualifiedMemberName,
+                                    lookupOptions);
+      if (!addExcludedChoices(lookup, MemberLookupResult::UR_WrongModule))
+        return result;
+    }
+
+    // Look for members that were excluded by access control.
     NameLookupOptions lookupOptions = defaultMemberLookupOptions;
-    
+
     // Ignore access control so we get candidates that might have been missed
     // before.
     lookupOptions |= NameLookupFlags::IgnoreAccessControl;
 
     auto lookup =
         TypeChecker::lookupMember(DC, instanceTy, memberName, lookupOptions);
-    for (auto entry : lookup) {
-      auto *cand = entry.getValueDecl();
-
-      // If the result is invalid, skip it.
-      if (cand->isInvalid()) {
-        result.markErrorAlreadyDiagnosed();
-        return result;
-      }
-
-      if (excludedDynamicMembers.count(cand))
-        continue;
-
-      result.addUnviable(getOverloadChoice(cand, /*isBridged=*/false,
-                                           /*isUnwrappedOptional=*/false),
-                         MemberLookupResult::UR_Inaccessible);
-    }
+    addExcludedChoices(lookup, MemberLookupResult::UR_Inaccessible);
   }
   
   return result;
@@ -7947,6 +7966,11 @@ fixMemberRef(ConstraintSystem &cs, Type baseTy,
                        cs, baseTy, choice.getDecl(), memberName, locator)
                  : nullptr;
     }
+
+    case MemberLookupResult::UR_WrongModule:
+      assert(choice.isDecl());
+      return AllowMemberFromWrongModule::create(cs, baseTy, choice.getDecl(),
+                                                memberName, locator);
 
     case MemberLookupResult::UR_Inaccessible:
       assert(choice.isDecl());
@@ -11637,6 +11661,7 @@ ConstraintSystem::SolutionKind ConstraintSystem::simplifyFixConstraint(
   case FixKind::AllowInvalidInitRef:
   case FixKind::AllowClosureParameterDestructuring:
   case FixKind::AllowInaccessibleMember:
+  case FixKind::AllowMemberFromWrongModule:
   case FixKind::AllowAnyObjectKeyPathRoot:
   case FixKind::AllowMultiArgFuncKeyPathMismatch:
   case FixKind::TreatKeyPathSubscriptIndexAsHashable:

@@ -46,6 +46,7 @@ extension ModuleSelectorTestingKit::A: Swift::Equatable {
     }
     else {
       self = ModuleSelectorTestingKit::A(value: .Swift::min)
+      self = A.ModuleSelectorTestingKit::init(value: .min)
     }
 
     self.main::myNegate()
@@ -112,6 +113,9 @@ extension B: main::Equatable {
       self = main::B(value: .main::min)
       // expected-error@-1 {{declaration 'B' is not imported through module 'main'}}
       // expected-note@-2 {{did you mean module 'ModuleSelectorTestingKit'?}} {{14-18=ModuleSelectorTestingKit}}
+      self = B.main::init(value: .min)
+      // expected-error@-1 {{declaration 'init(value:)' is not imported through module 'main'}}
+      // expected-note@-2 {{did you mean module 'ModuleSelectorTestingKit'?}} {{16-20=ModuleSelectorTestingKit}}
     }
     
     self.main::myNegate()
@@ -146,7 +150,7 @@ extension C: ModuleSelectorTestingKit::Equatable {
   
   @_dynamicReplacement(for: ModuleSelectorTestingKit::negate())
   mutating func myNegate() {
-  // FIXME improve: expected-note@-1 {{did you mean 'myNegate'?}}
+  // expected-note@-1 {{'myNegate()' declared here}}
 
     let fn: (ModuleSelectorTestingKit::Int, ModuleSelectorTestingKit::Int) -> ModuleSelectorTestingKit::Int =
     // expected-error@-1 3{{type 'Int' is not imported through module 'ModuleSelectorTestingKit'}}
@@ -172,11 +176,14 @@ extension C: ModuleSelectorTestingKit::Equatable {
     }
     else {
       self = ModuleSelectorTestingKit::C(value: .ModuleSelectorTestingKit::min)
-      // FIXME improve: expected-error@-1 {{type 'Int' has no member 'ModuleSelectorTestingKit::min'}}
+      // expected-error@-1 {{declaration 'min' is not imported through module 'ModuleSelectorTestingKit'}}
+      // expected-note@-2 {{did you mean module 'Swift'?}} {{50-74=Swift}}
+      self = C.ModuleSelectorTestingKit::init(value: .min)
     }
     
     self.ModuleSelectorTestingKit::myNegate()
-    // FIXME improve: expected-error@-1 {{value of type 'C' has no member 'ModuleSelectorTestingKit::myNegate'}}
+    // expected-error@-1 {{declaration 'myNegate()' is not imported through module 'ModuleSelectorTestingKit'}}
+    // expected-note@-2 {{did you mean module 'main'?}} {{10-34=main}}
   }
 
   // FIXME: Can we test @convention(witness_method:)?
@@ -209,7 +216,7 @@ extension D: Swift::Equatable {
   // expected-error@-1 {{replaced function 'Swift::negate()' could not be found}}
   // expected-note@-2 {{did you mean module 'ModuleSelectorTestingKit'?}} {{29-34=ModuleSelectorTestingKit}}
   mutating func myNegate() {
-  // FIXME improve: expected-note@-1 {{did you mean 'myNegate'?}}
+  // expected-note@-1 {{'myNegate()' declared here}}
 
     let fn: (Swift::Int, Swift::Int) -> Swift::Int =
       (Swift::+)
@@ -229,10 +236,14 @@ extension D: Swift::Equatable {
       self = Swift::D(value: .ModuleSelectorTestingKit::min)
       // expected-error@-1 {{declaration 'D' is not imported through module 'Swift'}}
       // expected-note@-2 {{did you mean module 'ModuleSelectorTestingKit'?}} {{14-19=ModuleSelectorTestingKit}}
+      self = D.Swift::init(value: .min)
+      // expected-error@-1 {{declaration 'init(value:)' is not imported through module 'Swift'}}
+      // expected-note@-2 {{did you mean module 'ModuleSelectorTestingKit'?}} {{16-21=ModuleSelectorTestingKit}}
     }
     
     self.Swift::myNegate()
-    // FIXME improve: expected-error@-1 {{value of type 'D' has no member 'Swift::myNegate'}}
+    // expected-error@-1 {{declaration 'myNegate()' is not imported through module 'Swift'}}
+    // expected-note@-2 {{did you mean module 'main'?}} {{10-15=main}}
   }
 
   // FIXME: Can we test @convention(witness_method:)?
@@ -463,8 +474,8 @@ func badModuleNames() {
   // FIXME redundant: expected-note@-3  {{did you mean module 'Swift'?}}
 
   _ = "foo".NonexistentModule::count
-  // FIXME improve: expected-error@-1 {{value of type 'String' has no member 'NonexistentModule::count'}}
-  // FIXME: expected-EVENTUALLY-note@-2 {{did you mean module 'Swift'?}} {{13-30=Swift}}
+  // expected-error@-1 {{declaration 'count' is not imported through module 'NonexistentModule'}}
+  // expected-note@-2 {{did you mean module 'Swift'?}} {{13-30=Swift}}
 
   let x: NonexistentModule::MyType = NonexistentModule::MyType()
   // expected-error@-1 {{cannot find type 'NonexistentModule::MyType' in scope}}
