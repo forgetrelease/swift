@@ -6092,6 +6092,9 @@ ConstraintSystem::simplifyConstructionConstraint(
   // variable T. T2 is the result type provided via the construction
   // constraint itself.
   addValueMemberConstraint(MetatypeType::get(valueType, getASTContext()),
+                           // OK: simplifyConstructionConstraint() is only used
+                           // for `T(...)` init calls, not `T.init(...)` calls,
+                           // so there's no module selector on `init`.
                            DeclNameRef::createConstructor(),
                            memberType,
                            useDC, functionRefKind,
@@ -11165,7 +11168,9 @@ ConstraintSystem::simplifyRestrictedConstraintImpl(
     auto *memberTy = createTypeVariable(memberLoc, TVO_CanBindToNoEscape);
 
     addValueMemberConstraint(MetatypeType::get(type2, getASTContext()),
-                             DeclNameRef(DeclBaseName::createConstructor()),
+                             // OK: Implicit conversion, no module selector to
+                             // drop here.
+                             DeclNameRef::createConstructor(),
                              memberTy, DC, FunctionRefKind::DoubleApply,
                              /*outerAlternatives=*/{}, memberLoc);
 

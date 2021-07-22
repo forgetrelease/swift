@@ -9,6 +9,8 @@
 // * Whether we handle access paths correctly
 // * Interaction with ClangImporter
 // * Cross-import overlays
+// * Key paths
+// * Key path dynamic member lookup
 //
 // It also might not cover all combinations of name lookup paths and inputs.
 

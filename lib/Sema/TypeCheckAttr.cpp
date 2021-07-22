@@ -1977,6 +1977,8 @@ SynthesizeMainFunctionRequest::evaluate(Evaluator &evaluator,
   // mainType.main() from the entry point, and that would require fully
   // type-checking the call to mainType.main().
 
+  // FIXME: resolveValueMember() is intended for IDEs--we should use something
+  // else.
   auto resolution = resolveValueMember(
       *declContext, nominal->getInterfaceType(), context.Id_main);
 
