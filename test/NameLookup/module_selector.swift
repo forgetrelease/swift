@@ -284,7 +284,7 @@ struct AvailableUser {
 }
 
 func builderUser2(@main::MyBuilder fn: () -> Void) {}
-// FIXME should succeed: expected-error@-1 {{unknown attribute 'MyBuilder'}}
+// FIXME improve: expected-error@-1 {{unknown attribute 'MyBuilder'}}
 
 func builderUser3(@ModuleSelectorTestingKit::MyBuilder fn: () -> Void) {}
 // no-error
@@ -333,16 +333,15 @@ func main::decl1(
   // expected-error@-1 {{name of function declaration cannot be qualified with module selector}}
   main::p1: main::A,
   // expected-error@-1 {{argument label cannot be qualified with module selector}}
-  // FIXME access path: expected-error@-2 {{type 'A' is not imported through module 'main'}}
-  // FIXME access path: expected-note@-3 {{did you mean module 'ModuleSelectorTestingKit'?}} {{13-17=ModuleSelectorTestingKit}}
-  main::label p2: main::A,
+  // expected-error@-2 {{type 'A' is not imported through module 'main'}}
+  // expected-note@-3 {{did you mean module 'ModuleSelectorTestingKit'?}} {{13-17=ModuleSelectorTestingKit}}
+  main::label p2: main::inout A,
   // expected-error@-1 {{argument label cannot be qualified with module selector}}
-  // FIXME access path: expected-error@-2 {{type 'A' is not imported through module 'main'}}
-  // FIXME access path: expected-note@-3 {{did you mean module 'ModuleSelectorTestingKit'?}} {{19-23=ModuleSelectorTestingKit}}
-  label main::p3: main::A
+  // FIXME: expected-error@-2 {{expected identifier in dotted type}} should be something like {{type 'inout' is not imported through module 'main'}}
+  label main::p3: @main::escaping () -> A
   // expected-error@-1 {{name of parameter declaration cannot be qualified with module selector}}
-  // FIXME access path: expected-error@-2 {{type 'A' is not imported through module 'main'}}
-  // FIXME access path: expected-note@-3 {{did you mean module 'ModuleSelectorTestingKit'?}} {{19-23=ModuleSelectorTestingKit}}
+  // FIXME: expected-error@-2 {{attribute can only be applied to declarations, not types}} should be something like {{type 'escaping' is not imported through module 'main'}}
+  // FIXME: expected-error@-3 {{expected parameter type following ':'}}
 ) {
   let main::decl1a = "a"
   // expected-error@-1 {{name of constant declaration cannot be qualified with module selector}}
