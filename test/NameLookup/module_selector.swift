@@ -196,7 +196,6 @@ extension C: ModuleSelectorTestingKit::Equatable {
 }
 
 // Test resolution of Swift:: using `D`
-// FIXME: Many more of these should fail once the feature is actually implemented.
 
 extension Swift::D {}
 // expected-error@-1 {{type 'D' is not imported through module 'Swift'}}
