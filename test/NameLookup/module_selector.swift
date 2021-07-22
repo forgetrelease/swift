@@ -470,3 +470,8 @@ func badModuleNames() {
   let y: A.NonexistentModule::MyChildType = fatalError()
   // expected-error@-1 {{'NonexistentModule::MyChildType' is not a member type of struct 'ModuleSelectorTestingKit.A'}}
 }
+public struct BadImplementsAttr: CustomStringConvertible {
+  @_implements(CustomStringConvertible, Swift::description)
+  // expected-error@-1 {{name cannot be qualified with module selector here}} {{41-48=}}
+  public var stringValue: String { fatalError() }
+}
