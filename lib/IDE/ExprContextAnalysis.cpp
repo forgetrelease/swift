@@ -448,7 +448,7 @@ static void collectPossibleCalleesByQualifiedLookup(
 
   SmallVector<ValueDecl *, 2> decls;
   if (!DC.lookupQualified(baseInstanceTy,
-                          name.withoutArgumentLabels(),
+                          name.withoutArgumentLabels(DC.getASTContext()),
                           NL_QualifiedDefault | NL_ProtocolMembers,
                           decls))
     return;

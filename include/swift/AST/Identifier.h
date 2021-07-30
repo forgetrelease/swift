@@ -747,7 +747,7 @@ public:
     return lhs.compare(rhs) >= 0;
   }
 
-  DeclNameRef withoutArgumentLabels() const;
+  DeclNameRef withoutArgumentLabels(ASTContext &C) const;
   DeclNameRef withArgumentLabels(ASTContext &C,
                                  ArrayRef<Identifier> argumentNames) const;
 
@@ -781,7 +781,7 @@ inline DeclNameRef DeclNameRef::getFromOpaqueValue(void *p) {
   return DeclNameRef(DeclName::getFromOpaqueValue(p));
 }
 
-inline DeclNameRef DeclNameRef::withoutArgumentLabels() const {
+inline DeclNameRef DeclNameRef::withoutArgumentLabels(ASTContext &C) const {
   return DeclNameRef(getBaseName());
 }
 
@@ -789,7 +789,6 @@ inline DeclNameRef DeclNameRef::withArgumentLabels(
     ASTContext &C, ArrayRef<Identifier> argumentNames) const {
   return DeclNameRef(DeclName(C, getBaseName(), argumentNames));
 }
-
 
 inline DeclNameRef DeclNameRef::createSubscript() {
   return DeclNameRef(DeclBaseName::createSubscript());

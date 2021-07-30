@@ -3662,7 +3662,8 @@ bool MissingMemberFailure::diagnoseAsError() {
       auto &cs = getConstraintSystem();
 
       auto result = cs.performMemberLookup(
-          ConstraintKind::ValueMember, getName().withoutArgumentLabels(),
+          ConstraintKind::ValueMember,
+          getName().withoutArgumentLabels(getASTContext()),
           metatypeTy, FunctionRefKind::DoubleApply, getLocator(),
           /*includeInaccessibleMembers=*/true);
 
