@@ -3202,6 +3202,17 @@ Parser::parseExprList(tok leftTok, tok rightTok, SyntaxKind Kind) {
                         /*Implicit=*/false));
 }
 
+bool listElementIsBinaryOperator(Parser &P, tok rightTok) {
+  // Look past a module selector, if present.
+  if (P.Tok.is(tok::identifier) && P.peekToken().is(tok::colon_colon)) {
+    return P.lookahead(2, [&](auto &scope) {
+      return listElementIsBinaryOperator(P, rightTok);
+    });
+  }
+
+  return P.Tok.isBinaryOperator() && P.peekToken().isAny(rightTok, tok::comma);
+}
+
 /// parseExprList - Parse a list of expressions.
 ///
 ///   expr-paren:
@@ -3246,12 +3257,10 @@ ParserStatus Parser::parseExprList(tok leftTok, tok rightTok,
     // follows a proper subexpression.
     ParserStatus Status;
     Expr *SubExpr = nullptr;
-    if (Tok.isBinaryOperator() && peekToken().isAny(rightTok, tok::comma)) {
+    if (listElementIsBinaryOperator(*this, rightTok)) {
       SyntaxParsingContext operatorContext(SyntaxContext,
                                            SyntaxKind::IdentifierExpr);
       DeclNameLoc Loc;
-      // FIXME: We would like to allow module selectors on binary operators, but
-      // the condition above won't let us reach this code.
       auto OperName = parseDeclNameRef(Loc, diag::expected_operator_ref,
                                        DeclNameFlag::AllowOperators |
                                        DeclNameFlag::AllowModuleSelector);

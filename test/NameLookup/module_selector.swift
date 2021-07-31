@@ -34,9 +34,7 @@ extension ModuleSelectorTestingKit::A: Swift::Equatable {
 
   @_dynamicReplacement(for: ModuleSelectorTestingKit::negate())
   mutating func myNegate() {
-    let fn: (Swift::Int, Swift::Int) -> Swift::Int =
-      (+)
-      // TODO: it'd be nice to handle module selectors on operators.
+    let fn: (Swift::Int, Swift::Int) -> Swift::Int = (Swift::+)
 
     let magnitude: Int.Swift::Magnitude = main::magnitude
     // expected-error@-1 {{cannot convert value of type 'Never' to specified type 'Int.Magnitude' (aka 'UInt')}}
@@ -93,9 +91,6 @@ extension B: main::Equatable {
     // expected-note@-3 {{did you mean module 'Swift'?}} {{25-29=Swift}}
     // expected-note@-4 {{did you mean module 'Swift'?}} {{39-43=Swift}}
       (main::+)
-      // TODO: it'd be nice to handle module selectors on operators.
-      // expected-error@-2 {{expected expression}}
-      // expected-error@-3 {{expected expression after operator}}
 
     let magnitude: Int.main::Magnitude = main::magnitude
     // expected-error@-1 {{type 'Magnitude' is not imported through module 'main'}}
@@ -160,9 +155,6 @@ extension C: ModuleSelectorTestingKit::Equatable {
     // expected-note@-3 {{did you mean module 'Swift'?}} {{45-69=Swift}}
     // expected-note@-4 {{did you mean module 'Swift'?}} {{79-103=Swift}}
       (ModuleSelectorTestingKit::+)
-      // TODO: it'd be nice to handle module selectors on operators.
-      // expected-error@-2 {{expected expression}}
-      // expected-error@-3 {{expected expression after operator}}
 
     let magnitude: Int.ModuleSelectorTestingKit::Magnitude = ModuleSelectorTestingKit::magnitude
     // expected-error@-1 {{type 'Magnitude' is not imported through module 'ModuleSelectorTestingKit'}}
@@ -225,10 +217,6 @@ extension D: Swift::Equatable {
 
     let fn: (Swift::Int, Swift::Int) -> Swift::Int =
       (Swift::+)
-      // TODO: it'd be nice to handle module selectors on operators.
-      // expected-error@-2 {{cannot convert value of type '()' to specified type '(Int, Int) -> Int'}}
-      // expected-error@-3 {{expected expression}}
-      // expected-error@-4 {{expected expression after operator}}
     let magnitude: Int.Swift::Magnitude = Swift::magnitude
     // expected-error@-1 {{declaration 'magnitude' is not imported through module 'Swift'}}
     // expected-note@-2 {{did you mean module 'main'?}}

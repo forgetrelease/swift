@@ -175,7 +175,7 @@ bool Parser::startsParameterName(bool isClosure) {
     // "isolated" can be an argument label, but it's also a contextual keyword,
     // so look ahead one more token (two total) see if we have a ':' that would
     // indicate that this is an argument label.
-    return lookahead<bool>(2, [&](CancellableBacktrackingScope &) {
+    return lookahead(2, [&](CancellableBacktrackingScope &) {
       if (Tok.is(tok::colon))
         return true; // isolated :
 
@@ -281,7 +281,7 @@ Parser::parseParameterClause(SourceLoc &leftParenLoc,
         }
 
         // is this 'isolated' token the identifier of an argument label?
-        bool partOfArgumentLabel = lookahead<bool>(1, [&](CancellableBacktrackingScope &) {
+        bool partOfArgumentLabel = lookahead(1, [&](CancellableBacktrackingScope &) {
           if (Tok.is(tok::colon))
             return true;  // isolated :
 
