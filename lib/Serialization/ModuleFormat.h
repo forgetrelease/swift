@@ -56,7 +56,7 @@ const uint16_t SWIFTMODULE_VERSION_MAJOR = 0;
 /// describe what change you made. The content of this comment isn't important;
 /// it just ensures a conflict if two people change the module format.
 /// Don't worry about adhering to the 80-column limit for this line.
-const uint16_t SWIFTMODULE_VERSION_MINOR = 623; // remove designated types
+const uint16_t SWIFTMODULE_VERSION_MINOR = 624; // DeclNameRef ModuleSelector fields
 
 /// A standard hash seed used for all string hashes in a serialized module.
 ///
@@ -1931,6 +1931,7 @@ namespace decls_block {
   using DerivativeDeclAttrLayout = BCRecordLayout<
     Derivative_DECL_ATTR,
     BCFixed<1>, // Implicit flag.
+    IdentifierIDField, // Original module selector.
     IdentifierIDField, // Original name.
     BCFixed<1>, // Has original accessor kind?
     AccessorKindField, // Original accessor kind.
@@ -1958,7 +1959,7 @@ namespace decls_block {
     DynamicReplacement_DECL_ATTR,
     BCFixed<1>, // implicit flag
     DeclIDField, // replaced function
-    BCVBR<4>,   // # of arguments (+1) or zero if no name
+    BCVBR<4>,   // # of arguments (+2) or zero if no name
     BCArray<IdentifierIDField>
   >;
 
