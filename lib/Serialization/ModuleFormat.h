@@ -56,7 +56,7 @@ const uint16_t SWIFTMODULE_VERSION_MAJOR = 0;
 /// describe what change you made. The content of this comment isn't important;
 /// it just ensures a conflict if two people change the module format.
 /// Don't worry about adhering to the 80-column limit for this line.
-const uint16_t SWIFTMODULE_VERSION_MINOR = 624; // DeclNameRef ModuleSelector fields
+const uint16_t SWIFTMODULE_VERSION_MINOR = 625; // New @_specialize layout
 
 /// A standard hash seed used for all string hashes in a serialized module.
 ///
@@ -1915,9 +1915,9 @@ namespace decls_block {
     BCFixed<1>, // specialization kind
     GenericSignatureIDField, // specialized signature
     DeclIDField, // target function
-    BCVBR<4>,   // # of arguments (+1) or 1 if simple decl name, 0 if no target
+    BCFixed<2>, // 0 = no target func name, 1 = simple name, 2 = compound name
     BCVBR<4>,   // # of SPI groups
-    BCArray<IdentifierIDField> // target function pieces, spi groups
+    BCArray<IdentifierIDField> // target func base name/mod sel/args, spi groups
   >;
 
   using DifferentiableDeclAttrLayout = BCRecordLayout<
@@ -1943,6 +1943,7 @@ namespace decls_block {
   using TransposeDeclAttrLayout = BCRecordLayout<
     Transpose_DECL_ATTR,
     BCFixed<1>, // Implicit flag.
+    IdentifierIDField, // Original module selector.
     IdentifierIDField, // Original name.
     DeclIDField, // Original function declaration.
     BCArray<BCFixed<1>> // Transposed parameter indices' bitvector.

@@ -2528,33 +2528,40 @@ class Serializer::DeclSerializer : public DeclVisitor<DeclSerializer> {
 
       SmallVector<IdentifierID, 4> pieces;
 
-      // encodes whether this a a simple or compound name by adding one.
-      size_t numArgs = 0;
-      if (targetFun) {
+      // 0 = no target; 1 = target has simple name; 2 = target has compound
+      // name. 3 is a dummy value.
+      uint8_t targetKind = 3;
+      if (!targetFun) {
+        targetKind = 0;
+      } else {
         pieces.push_back(S.addDeclBaseNameRef(targetFun.getBaseName()));
-        for (auto argName : targetFun.getArgumentNames())
-          pieces.push_back(S.addDeclBaseNameRef(argName));
-        if (targetFun.isSimpleName()) {
-          assert(pieces.size() == 1);
-          numArgs = 1;
-        } else
-          numArgs = pieces.size() + 1;
-      }
+        pieces.push_back(S.addDeclBaseNameRef(targetFun.getModuleSelector()));
 
+        if (targetFun.isSimpleName()) {
+          targetKind = 1;
+        } else {
+          targetKind = 2;
+          for (auto argName : targetFun.getArgumentNames())
+            pieces.push_back(S.addDeclBaseNameRef(argName));
+        }
+      }
+      assert(targetKind != 3 && "didn't initialize targetKind?");
+
+      auto numSPIGroups = attr->getSPIGroups().size();
       for (auto spi : attr->getSPIGroups()) {
         assert(!spi.empty() && "Empty SPI name");
         pieces.push_back(S.addDeclBaseNameRef(spi));
       }
 
-      auto numSPIGroups = attr->getSPIGroups().size();
-      assert(pieces.size() == numArgs + numSPIGroups ||
-             pieces.size() == (numArgs - 1 + numSPIGroups));
+      assert(targetKind != 0 || pieces.size() == numSPIGroups);
+      assert(targetKind == 0 || pieces.size() ==
+                 2 + targetFun.getArgumentNames().size() + numSPIGroups);
 
       SpecializeDeclAttrLayout::emitRecord(
           S.Out, S.ScratchRecord, abbrCode, (unsigned)attr->isExported(),
           (unsigned)attr->getSpecializationKind(),
           S.addGenericSignatureRef(attr->getSpecializedSignature()),
-          S.addDeclRef(targetFunDecl), numArgs, numSPIGroups, pieces);
+          S.addDeclRef(targetFunDecl), targetKind, numSPIGroups, pieces);
       return;
     }
 
@@ -2665,6 +2672,9 @@ class Serializer::DeclSerializer : public DeclVisitor<DeclSerializer> {
       assert(attr->getOriginalFunction() &&
              "`@transpose` attribute should have original declaration set "
              "during construction or parsing");
+      auto origModSel = attr->getOriginalFunctionName().Name
+                          .getModuleSelector();
+      IdentifierID origModSelId = S.addDeclBaseNameRef(origModSel);
       auto origName = attr->getOriginalFunctionName().Name.getBaseName();
       IdentifierID origNameId = S.addDeclBaseNameRef(origName);
       DeclID origDeclID = S.addDeclRef(attr->getOriginalFunction());
@@ -2674,8 +2684,8 @@ class Serializer::DeclSerializer : public DeclVisitor<DeclSerializer> {
       for (unsigned i : range(parameterIndices->getCapacity()))
         paramIndicesVector.push_back(parameterIndices->contains(i));
       TransposeDeclAttrLayout::emitRecord(
-          S.Out, S.ScratchRecord, abbrCode, attr->isImplicit(), origNameId,
-          origDeclID, paramIndicesVector);
+          S.Out, S.ScratchRecord, abbrCode, attr->isImplicit(), origModSelId,
+          origNameId, origDeclID, paramIndicesVector);
       return;
     }
     }
