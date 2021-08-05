@@ -332,6 +332,9 @@ ParserResult<TypeRepr> Parser::parseSILBoxType(GenericParamList *generics,
 ///
 ParserResult<TypeRepr> Parser::parseType(
     Diag<> MessageID, ParseTypeReason reason) {
+  // If we have an invalid module selector, consume that first.
+  parseModuleSelector(ModuleSelectorReason::InvalidOnly);
+
   // Start a context for creating type syntax.
   SyntaxParsingContext TypeParsingContext(SyntaxContext,
                                           SyntaxContextKind::Type);
