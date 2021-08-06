@@ -727,7 +727,8 @@ ParserResult<Expr> Parser::parseExprKeyPathObjC() {
     // Parse the next name.
     DeclNameLoc nameLoc;
     DeclNameRef name = parseDeclNameRef(nameLoc,
-        diag::expr_keypath_expected_property_or_type, flags);
+        diag::expr_keypath_expected_property_or_type, flags,
+        ModuleSelectorReason::ObjCName);
     if (!name) {
       status.setIsParseError();
       break;
@@ -1198,8 +1199,7 @@ Parser::parseExprPostfixSuffix(ParserResult<Expr> Result, bool isExprBasic,
                      ? diag::expected_identifier_after_super_dot_expr
                      : diag::expected_member_name;
       auto Name = parseDeclNameRef(NameLoc, D,
-          DeclNameFlag::AllowKeywords | DeclNameFlag::AllowCompoundNames |
-          DeclNameFlag::AllowModuleSelector);
+          DeclNameFlag::AllowKeywords | DeclNameFlag::AllowCompoundNames);
       if (!Name) {
         SourceRange ErrorRange = Result.get()->getSourceRange();
         ErrorRange.widen(TokLoc);
@@ -1643,8 +1643,9 @@ ParserResult<Expr> Parser::parseExprPrimary(Diag<> ID, bool isExprBasic) {
         peekToken().isNot(tok::period, tok::period_prefix, tok::l_paren)) {
       DeferringContextRAII Deferring(*SyntaxContext);
 
-      diagnoseAndConsumeIfModuleSelector(InVarOrLetPattern != IVOLP_InVar
-                                         ? "constant" : "variable");
+      parseModuleSelector(ModuleSelectorReason::NameInDecl,
+                          InVarOrLetPattern != IVOLP_InVar
+                          ? "constant" : "variable");
 
       Identifier name;
       SourceLoc loc = consumeIdentifier(name, /*diagnoseDollarPrefix=*/false);
@@ -1731,8 +1732,7 @@ ParserResult<Expr> Parser::parseExprPrimary(Diag<> ID, bool isExprBasic) {
     }
 
     Name = parseDeclNameRef(NameLoc, diag::expected_identifier_after_dot_expr,
-        DeclNameFlag::AllowKeywords | DeclNameFlag::AllowCompoundNames |
-        DeclNameFlag::AllowModuleSelector);
+        DeclNameFlag::AllowKeywords | DeclNameFlag::AllowCompoundNames);
     if (!Name)
       return makeParserErrorResult(new (Context) ErrorExpr(DotLoc));
     SyntaxContext->createNodeInPlace(SyntaxKind::MemberAccessExpr);
@@ -2271,37 +2271,71 @@ static bool tryParseArgLabelList(Parser &P, Parser::DeclNameOptions flags,
   return true;
 }
 
+Optional<Located<Identifier>> Parser::
+parseModuleSelector(ModuleSelectorReason reason, StringRef declKindName) {
+  if (!Context.LangOpts.EnableExperimentalModuleSelector)
+    return None;
+
+  // Also allow the current token to be colon_colon, for diagnostics.
+  if (peekToken().isNot(tok::colon_colon) && Tok.isNot(tok::colon_colon))
+    return None;
+
+  // We will parse the selector whether or not it's allowed, then early return
+  // if it's disallowed, then diagnose any other errors in what we parsed. This
+  // will make sure we always consume the module selector's tokens, but don't
+  // complain about a malformed selector when it's not supposed to be there at
+  // all.
+
+  SourceLoc nameLoc;
+  Identifier moduleName;
+  if (Tok.is(tok::identifier))
+    nameLoc = consumeIdentifier(moduleName, /*diagnoseDollarPrefix=*/true);
+  else if (Tok.is(tok::colon_colon))
+    // Let nameLoc and colonColonLoc both point to the tok::colon_colon.
+    nameLoc = Tok.getLoc();
+  else
+    nameLoc = consumeToken();
+
+  auto colonColonLoc = consumeToken(tok::colon_colon);
+
+  if (reason != ModuleSelectorReason::Allowed) {
+    diagnose(colonColonLoc, diag::module_selector_not_allowed,
+             (uint8_t)reason, declKindName);
+
+    // Special fix-it for capture lists which transforms `Mod::foo` into
+    // `foo = Mod::foo`.
+    if (reason == ModuleSelectorReason::Capture &&
+        !moduleName.empty() && Tok.is(tok::identifier)) {
+      SmallString<32> scratch = Tok.getText();
+      scratch += " = ";
+      diagnose(nameLoc, diag::fixit_capture_with_explicit_name, Tok.getText())
+          .fixItInsert(nameLoc, scratch);
+    }
+
+    diagnose(nameLoc, diag::fixit_remove_module_selector)
+        .fixItRemove({nameLoc, colonColonLoc});
+
+    return None;
+  }
+
+  if (moduleName.empty())
+    diagnose(nameLoc, diag::expected_identifier_in_module_selector);
+
+  return Located<Identifier>(moduleName, nameLoc);
+}
+
 DeclNameRef Parser::parseDeclNameRef(DeclNameLoc &loc,
                                      const Diagnostic &diag,
-                                     DeclNameOptions flags) {
+                                     DeclNameOptions flags,
+                                     ModuleSelectorReason selectorReason) {
   SyntaxParsingContext declNameRefCtxt(SyntaxContext, SyntaxKind::DeclNameRef);
 
-  // Consume the module name, if present.
+  // Consume the module selector, if present.
   SourceLoc moduleSelectorLoc;
   Identifier moduleSelector;
-  if (Context.LangOpts.EnableExperimentalModuleSelector &&
-      peekToken().is(tok::colon_colon)) {
-    // FIXME: libSyntax
-
-    if (Tok.is(tok::identifier)) { // FIXME: tok::dollarident?
-      moduleSelectorLoc = consumeIdentifier(moduleSelector,
-                                            /*diagnoseDollarPrefix=*/true);
-    }
-    else {
-      diagnose(Tok, diag::expected_identifier_in_module_selector);
-      moduleSelector = Identifier();
-      moduleSelectorLoc = consumeToken();
-    }
-
-    // Diagnose if we don't allow a module selector here.
-    if (!flags.contains(DeclNameFlag::AllowModuleSelector)) {
-      diagnose(Tok, diag::module_selector_not_allowed_here)
-          .fixItRemove({moduleSelectorLoc, Tok.getLoc()});
-      moduleSelector = Identifier();
-      moduleSelectorLoc = SourceLoc();
-    }
-
-    consumeToken(tok::colon_colon);
+  if (auto locatedModule = parseModuleSelector(selectorReason)) {
+    moduleSelectorLoc = locatedModule->Loc;
+    moduleSelector = locatedModule->Item;
   }
 
   // Consume the base name.
@@ -2376,8 +2410,7 @@ ParserResult<Expr> Parser::parseExprIdentifier() {
   // Parse the unqualified-decl-name.
   DeclNameLoc loc;
   DeclNameRef name = parseDeclNameRef(loc, diag::expected_expr,
-                                      DeclNameFlag::AllowCompoundNames |
-                                      DeclNameFlag::AllowModuleSelector);
+                                      DeclNameFlag::AllowCompoundNames);
 
   SmallVector<TypeRepr*, 8> args;
   SourceLoc LAngleLoc, RAngleLoc;
@@ -2704,7 +2737,7 @@ ParserStatus Parser::parseClosureSignatureIfPresent(
       // FIXME: It'd be nice to be able to capture with a module selector, but
       // define a local name; however, that would complicate the equals check
       // here.
-      diagnoseAndConsumeIfModuleSelector("captured variable");
+      parseModuleSelector(ModuleSelectorReason::Capture);
 
       if (peekToken().isNot(tok::equal)) {
         // If this is the simple case, then the identifier is both the name and
@@ -2811,7 +2844,7 @@ ParserStatus Parser::parseClosureSignatureIfPresent(
       do {
         SyntaxParsingContext ClParamCtx(SyntaxContext, SyntaxKind::ClosureParam);
 
-        diagnoseAndConsumeIfModuleSelector("parameter");
+        parseModuleSelector(ModuleSelectorReason::ParamDecl);
 
         if (Tok.isNot(tok::identifier, tok::kw__, tok::code_complete)) {
           diagnose(Tok, diag::expected_closure_parameter_name);
@@ -3262,8 +3295,7 @@ ParserStatus Parser::parseExprList(tok leftTok, tok rightTok,
                                            SyntaxKind::IdentifierExpr);
       DeclNameLoc Loc;
       auto OperName = parseDeclNameRef(Loc, diag::expected_operator_ref,
-                                       DeclNameFlag::AllowOperators |
-                                       DeclNameFlag::AllowModuleSelector);
+                                       DeclNameFlag::AllowOperators);
       if (!OperName) {
         return makeParserError();
       }

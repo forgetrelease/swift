@@ -68,7 +68,7 @@ Parser::parseGenericParametersBeforeWhere(SourceLoc LAngleLoc,
       attributes.add(new (Context) RawDocCommentAttr(Tok.getCommentRange()));
     parseDeclAttributeList(attributes);
 
-    diagnoseAndConsumeIfModuleSelector("generic parameter");
+    parseModuleSelector(ModuleSelectorReason::GenericParamDecl);
 
     // Parse the name of the parameter.
     Identifier Name;

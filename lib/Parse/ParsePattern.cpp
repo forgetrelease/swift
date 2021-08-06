@@ -331,16 +331,16 @@ Parser::parseParameterClause(SourceLoc &leftParenLoc,
         .fixItReplace(Tok.getLoc(), "`" + Tok.getText().str() + "`");
     }
 
-    diagnoseAndConsumeIfModuleSelector(
-        canHaveLabels ? "argument label" : "parameter",
-        /*isDef=*/!canHaveLabels);
+    parseModuleSelector(canHaveLabels
+                      ? ModuleSelectorReason::ArgumentLabel
+                      : ModuleSelectorReason::ParamDecl);
 
     if (startsParameterName(isClosure)) {
       // identifier-or-none for the first name
       param.FirstNameLoc = consumeArgumentLabel(param.FirstName,
                                                 /*diagnoseDollarPrefix=*/!isClosure);
 
-      diagnoseAndConsumeIfModuleSelector("parameter");
+      parseModuleSelector(ModuleSelectorReason::ParamDecl);
 
       // identifier-or-none? for the second name
       if (Tok.canBeArgumentLabel())
@@ -1114,7 +1114,7 @@ ParserResult<Pattern> Parser::parsePattern() {
                          ? "constant" : "variable";
 
   // If there's a module selector here, consume and remove it.
-  diagnoseAndConsumeIfModuleSelector(declNameKind);
+  parseModuleSelector(ModuleSelectorReason::NameInDecl, declNameKind);
 
   switch (Tok.getKind()) {
   case tok::l_paren:
@@ -1214,9 +1214,9 @@ Parser::parsePatternTupleElement() {
   Identifier Label;
   SourceLoc LabelLoc;
 
-  StringRef declNameKind = InVarOrLetPattern != IVOLP_InVar
-                         ? "constant" : "variable";
-  diagnoseAndConsumeIfModuleSelector(declNameKind);
+  parseModuleSelector(ModuleSelectorReason::NameInDecl,
+                      InVarOrLetPattern != IVOLP_InVar
+                      ? "constant" : "variable");
 
   // If the tuple element has a label, parse it.
   if (Tok.is(tok::identifier) && peekToken().is(tok::colon)) {

@@ -670,7 +670,8 @@ bool Parser::parseSpecializeAttributeArguments(
               targetFunctionLoc, diag::attr_specialize_expected_function,
               DeclNameFlag::AllowZeroArgCompoundNames |
                   DeclNameFlag::AllowKeywordsUsingSpecialNames |
-                  DeclNameFlag::AllowOperators);
+                  DeclNameFlag::AllowOperators,
+              ModuleSelectorReason::SiblingDeclName);
         }
       }
       if (ParamLabel == "spiModule") {
@@ -686,7 +687,7 @@ bool Parser::parseSpecializeAttributeArguments(
           consumeToken();
           return false;
         }
-        diagnoseAndConsumeIfModuleSelector("SPI group");
+        parseModuleSelector(ModuleSelectorReason::SPIGroup);
         auto text = Tok.getText();
         spiGroups.push_back(Context.getIdentifier(text));
         consumeToken();
@@ -815,7 +816,8 @@ Parser::parseImplementsAttribute(SourceLoc AtLoc, SourceLoc Loc) {
       MemberName = parseDeclNameRef(MemberNameLoc,
           diag::attr_implements_expected_member_name,
           DeclNameFlag::AllowZeroArgCompoundNames |
-          DeclNameFlag::AllowOperators);
+          DeclNameFlag::AllowOperators,
+          ModuleSelectorReason::SiblingDeclName);
       if (!MemberName) {
         Status.setIsParseError();
       }
@@ -1193,8 +1195,7 @@ static bool parseQualifiedDeclName(Parser &P, Diag<> nameParseError,
         original.Loc, nameParseError,
         Parser::DeclNameFlag::AllowZeroArgCompoundNames |
             Parser::DeclNameFlag::AllowKeywordsUsingSpecialNames |
-            Parser::DeclNameFlag::AllowOperators |
-            Parser::DeclNameFlag::AllowModuleSelector);
+            Parser::DeclNameFlag::AllowOperators);
     // The base type is optional, but the final unqualified declaration name is
     // not. If name could not be parsed, return true for error.
     if (!original.Name)
@@ -1862,7 +1863,7 @@ bool Parser::parseNewDeclAttribute(DeclAttributes &Attributes, SourceLoc AtLoc,
       return false;
     }
 
-    diagnoseAndConsumeIfModuleSelector("SPI group");
+    parseModuleSelector(ModuleSelectorReason::SPIGroup);
 
     auto text = Tok.getText();
     spiGroups.push_back(Context.getIdentifier(text));
@@ -1974,10 +1975,7 @@ bool Parser::parseNewDeclAttribute(DeclAttributes &Attributes, SourceLoc AtLoc,
       return false;
     }
 
-    diagnoseAndConsumeIfModuleSelector(
-        "Objective-C class name in @_swift_native_objc_runtime_base",
-        /*IsDef=*/true);
-
+    parseModuleSelector(ModuleSelectorReason::ObjCName);
     if (Tok.isNot(tok::identifier)) {
       diagnose(Loc, diag::swift_native_objc_runtime_base_must_be_identifier);
       return false;
@@ -2495,8 +2493,7 @@ bool Parser::parseNewDeclAttribute(DeclAttributes &Attributes, SourceLoc AtLoc,
           diag::attr_dynamic_replacement_expected_function,
           DeclNameFlag::AllowZeroArgCompoundNames |
           DeclNameFlag::AllowKeywordsUsingSpecialNames |
-          DeclNameFlag::AllowOperators |
-          DeclNameFlag::AllowModuleSelector);
+          DeclNameFlag::AllowOperators);
     }
 
     // Parse the matching ')'.
@@ -2599,13 +2596,13 @@ bool Parser::parseNewDeclAttribute(DeclAttributes &Attributes, SourceLoc AtLoc,
   }
 
   case DAK_ProjectedValueProperty: {
-    diagnoseAndConsumeIfModuleSelector("@_projectedValueProperty attribute");
-
     if (!consumeIf(tok::l_paren)) {
       diagnose(Loc, diag::attr_expected_lparen, AttrName,
                DeclAttribute::isDeclModifier(DK));
       return false;
     }
+
+    parseModuleSelector(ModuleSelectorReason::SiblingDeclName);
 
     if (Tok.isNot(tok::identifier)) {
       diagnose(Loc, diag::projection_value_property_not_identifier);
@@ -3142,8 +3139,7 @@ bool Parser::parseConventionAttributeInternal(
 
     DeclNameLoc unusedLoc;
     convention.WitnessMethodProtocol = parseDeclNameRef(unusedLoc,
-        diag::convention_attribute_witness_method_expected_protocol,
-        DeclNameFlag::AllowModuleSelector);
+        diag::convention_attribute_witness_method_expected_protocol, {});
   }
   
   // Parse the ')'.  We can't use parseMatchingToken if we're in
@@ -4822,27 +4818,11 @@ ParserStatus Parser::parseInheritance(
   return Status;
 }
 
-bool Parser::diagnoseAndConsumeIfModuleSelector(StringRef KindName,
-                                               bool IsDefinition) {
-  if (!Context.LangOpts.EnableExperimentalModuleSelector ||
-      peekToken().isNot(tok::colon_colon))
-    return false;
-
-  // Diagnose an error and consume the module selector so we can continue.
-  SourceLoc start = consumeToken();
-  SourceLoc end = consumeToken(tok::colon_colon);
-  diagnose(end, diag::module_selector_not_allowed_in_decl, IsDefinition,
-           KindName)
-      .fixItRemove({start, end});
-
-  return true;
-}
-
 static ParserStatus
 parseIdentifierDeclName(Parser &P, Identifier &Result, SourceLoc &Loc,
                         StringRef DeclKindName,
                         llvm::function_ref<bool(const Token &)> canRecover) {
-  P.diagnoseAndConsumeIfModuleSelector(DeclKindName);
+  P.parseModuleSelector(Parser::ModuleSelectorReason::NameInDecl, DeclKindName);
 
   if (P.Tok.is(tok::identifier)) {
     Loc = P.consumeIdentifier(Result, /*diagnoseDollarPrefix=*/true);
@@ -5759,7 +5739,7 @@ static ParameterList *parseOptionalAccessorArgument(SourceLoc SpecifierLoc,
     SyntaxParsingContext ParamCtx(P.SyntaxContext, SyntaxKind::AccessorParameter);
     StartLoc = P.consumeToken(tok::l_paren);
 
-    P.diagnoseAndConsumeIfModuleSelector("accessor parameter");
+    P.parseModuleSelector(Parser::ModuleSelectorReason::ParamDecl);
 
     if (P.Tok.isNot(tok::identifier)) {
       P.diagnose(P.Tok, diag::expected_accessor_parameter_name,
@@ -7245,8 +7225,6 @@ Parser::parseDeclEnumCase(ParseDeclOptions Flags,
       break;
     }
 
-    diagnoseAndConsumeIfModuleSelector("enum 'case'");
-
     if (Tok.is(tok::identifier)) {
       Status |= parseIdentifierDeclName(
           *this, Name, NameLoc, "enum 'case'", [](const Token &next) {
@@ -8164,11 +8142,10 @@ parsePrecedenceGroupNameList(Parser &P, Fn takeGroupName) {
 
     // TODO: We could support module selectors for precedence groups if we
     //       implemented the lookup for it.
-    P.diagnoseAndConsumeIfModuleSelector("precedence group specifier",
-                                         /*isDef=*/false);
     DeclNameLoc nameLoc;
     auto name = P.parseDeclNameRef(nameLoc,
-        diag::expected_group_name_in_precedencegroup_list, {});
+        diag::expected_group_name_in_precedencegroup_list, {},
+        Parser::ModuleSelectorReason::PrecedenceGroup);
     if (!name)
       return makeParserError();
 
@@ -8307,7 +8284,7 @@ Parser::parseDeclPrecedenceGroup(ParseDeclOptions flags,
     return nullptr;
   }
 
-  diagnoseAndConsumeIfModuleSelector("precedence group");
+  parseModuleSelector(ModuleSelectorReason::PrecedenceGroup);
 
   Identifier name;
   SourceLoc nameLoc;

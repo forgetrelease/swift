@@ -66,7 +66,7 @@ extension B: main::Equatable {
   // expected-note@-2 {{did you mean module 'Swift'?}} {{14-18=Swift}}
 
   @_implements(main::Equatable, main::==(_:_:))
-  // expected-error@-1 {{name cannot be qualified with module selector here}} {{33-39=}}
+  // expected-error@-1 {{name of sibling declaration cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{33-39=}}
   // expected-error@-2 {{type 'Equatable' is not imported through module 'main'}}
   // expected-note@-3 {{did you mean module 'Swift'?}} {{16-20=Swift}}
   public static func equals(_: main::B, _: main::B) -> main::Bool {
@@ -132,7 +132,7 @@ extension C: ModuleSelectorTestingKit::Equatable {
 // expected-note@-2 {{did you mean module 'Swift'?}} {{14-38=Swift}}
 
   @_implements(ModuleSelectorTestingKit::Equatable, ModuleSelectorTestingKit::==(_:_:))
-  // expected-error@-1 {{name cannot be qualified with module selector here}} {{53-79=}}
+  // expected-error@-1 {{name of sibling declaration cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{53-79=}}
   // expected-error@-2 {{type 'Equatable' is not imported through module 'ModuleSelectorTestingKit'}}
   // expected-note@-3 {{did you mean module 'Swift'?}} {{16-40=Swift}}
 
@@ -197,7 +197,7 @@ extension D: Swift::Equatable {
 // Caused by Swift::D failing to typecheck in `equals(_:_:)`: expected-error@-1 *{{extension outside of file declaring struct 'D' prevents automatic synthesis of '==' for protocol 'Equatable'}}
 
   @_implements(Swift::Equatable, Swift::==(_:_:))
-  // expected-error@-1 {{name cannot be qualified with module selector here}} {{34-41=}}
+  // expected-error@-1 {{name of sibling declaration cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{34-41=}}
 
   public static func equals(_: Swift::D, _: Swift::D) -> Swift::Bool {
   // expected-error@-1 2{{type 'D' is not imported through module 'Swift'}}
@@ -317,36 +317,36 @@ func whitespace() {
 // Error cases
 
 func main::decl1(
-  // expected-error@-1 {{name of function declaration cannot be qualified with module selector}}
+  // expected-error@-1 {{name in function declaration cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{6-12=}}
   main::p1: main::A,
-  // expected-error@-1 {{argument label cannot be qualified with module selector}}
+  // expected-error@-1 {{argument label cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{3-9=}}
   // expected-error@-2 {{type 'A' is not imported through module 'main'}}
   // expected-note@-3 {{did you mean module 'ModuleSelectorTestingKit'?}} {{13-17=ModuleSelectorTestingKit}}
   main::label p2: main::inout A,
-  // expected-error@-1 {{argument label cannot be qualified with module selector}}
+  // expected-error@-1 {{argument label cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{3-9=}}
   // FIXME: expected-error@-2 {{expected identifier in dotted type}} should be something like {{type 'inout' is not imported through module 'main'}}
   label main::p3: @main::escaping () -> A
-  // expected-error@-1 {{name of parameter declaration cannot be qualified with module selector}}
+  // expected-error@-1 {{parameter name cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{9-15=}}
   // FIXME: expected-error@-2 {{attribute can only be applied to declarations, not types}} should be something like {{type 'escaping' is not imported through module 'main'}}
   // FIXME: expected-error@-3 {{expected parameter type following ':'}}
 ) {
   let main::decl1a = "a"
-  // expected-error@-1 {{name of constant declaration cannot be qualified with module selector}}
+  // expected-error@-1 {{name in constant declaration cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{7-13=}}
 
   var main::decl1b = "b"
-  // expected-error@-1 {{name of variable declaration cannot be qualified with module selector}}
+  // expected-error@-1 {{name in variable declaration cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{7-13=}}
 
   let (main::decl1c, main::decl1d) = ("c", "d")
-  // expected-error@-1 {{name of constant declaration cannot be qualified with module selector}}
-  // expected-error@-2 {{name of constant declaration cannot be qualified with module selector}}
+  // expected-error@-1 {{name in constant declaration cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{8-14=}}
+  // expected-error@-2 {{name in constant declaration cannot be qualified with a module selector}} expected-note@-2 {{remove module selector from this name}} {{22-28=}}
 
   if let (main::decl1e, main::decl1f) = Optional(("e", "f")) {}
-  // expected-error@-1 {{name of constant declaration cannot be qualified with module selector}}
-  // expected-error@-2 {{name of constant declaration cannot be qualified with module selector}}
+  // expected-error@-1 {{name in constant declaration cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{11-17=}}
+  // expected-error@-2 {{name in constant declaration cannot be qualified with a module selector}} expected-note@-2 {{remove module selector from this name}} {{25-31=}}
 
   guard let (main::decl1g, main::decl1h) = Optional(("g", "h")) else { return }
-  // expected-error@-1 {{name of constant declaration cannot be qualified with module selector}}
-  // expected-error@-2 {{name of constant declaration cannot be qualified with module selector}}
+  // expected-error@-1 {{name in constant declaration cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{14-20=}}
+  // expected-error@-2 {{name in constant declaration cannot be qualified with a module selector}} expected-note@-2 {{remove module selector from this name}} {{28-34=}}
 
   // From uses in the switch statements below:
   // expected-note@-5 3{{did you mean the local declaration?}}
@@ -354,7 +354,7 @@ func main::decl1(
   switch Optional(main::decl1g) {
   // expected-error@-1 {{declaration 'decl1g' is not imported through module 'main'}}
   case Optional.some(let main::decl1i):
-    // expected-error@-1 {{name of constant declaration cannot be qualified with module selector}}
+    // expected-error@-1 {{name in constant declaration cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{26-32=}}
     break
   case .none:
     break
@@ -363,7 +363,7 @@ func main::decl1(
   switch Optional(main::decl1g) {
   // expected-error@-1 {{declaration 'decl1g' is not imported through module 'main'}}
   case let Optional.some(main::decl1j):
-    // expected-error@-1 {{name of constant declaration cannot be qualified with module selector}}
+    // expected-error@-1 {{name in constant declaration cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{26-32=}}
     break
   case .none:
     break
@@ -372,104 +372,106 @@ func main::decl1(
   switch Optional(main::decl1g) {
  // expected-error@-1 {{declaration 'decl1g' is not imported through module 'main'}}
  case let main::decl1k?:
-    // expected-error@-1 {{name of constant declaration cannot be qualified with module selector}}
+    // expected-error@-1 {{name in constant declaration cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{11-17=}}
     break
   case .none:
     break
   }
 
   for main::decl1l in "lll" {}
-  // expected-error@-1 {{name of constant declaration cannot be qualified with module selector}}
+  // expected-error@-1 {{name in constant declaration cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{7-13=}}
 
   "lll".forEach { [main::magnitude]
-    // expected-error@-1 {{name of captured variable declaration cannot be qualified with module selector}}
+    // expected-error@-1 {{captured variable name cannot be qualified with a module selector}}
+    // expected-note@-2 {{remove module selector from this name}} {{20-26=}}
+    // expected-note@-3 {{explicitly capture into a variable named 'magnitude'}} {{20-20=magnitude = }}
     main::elem in print(elem)
-    // expected-error@-1 {{name of parameter declaration cannot be qualified with module selector}}
+    // expected-error@-1 {{parameter name cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{5-11=}}
   }
 
   "lll".forEach { (main::elem) in print(elem) }
-  // expected-error@-1 {{name of parameter declaration cannot be qualified with module selector}}
+  // expected-error@-1 {{parameter name cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{20-26=}}
 
   "lll".forEach { (main::elem) -> Void in print(elem) }
-  // expected-error@-1 {{name of parameter declaration cannot be qualified with module selector}}
+  // expected-error@-1 {{parameter name cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{20-26=}}
 
   "lll".forEach { (main::elem: Character) -> Void in print(elem) }
-  // expected-error@-1 {{name of parameter declaration cannot be qualified with module selector}}
+  // expected-error@-1 {{parameter name cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{20-26=}}
 }
 enum main::decl2 {
-  // expected-error@-1 {{name of enum declaration cannot be qualified with module selector}}
+  // expected-error@-1 {{name in enum declaration cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{6-12=}}
 
   case main::decl2a
-  // expected-error@-1 {{name of enum 'case' declaration cannot be qualified with module selector}}
+  // expected-error@-1 {{name in enum 'case' declaration cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{8-14=}}
 }
 
 struct main::decl3 {}
-// expected-error@-1 {{name of struct declaration cannot be qualified with module selector}}
+// expected-error@-1 {{name in struct declaration cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{8-14=}}
 
 class main::decl4<main::T> {}
-// expected-error@-1 {{name of class declaration cannot be qualified with module selector}}
-// expected-error@-2 {{name of generic parameter declaration cannot be qualified with module selector}}
+// expected-error@-1 {{name in class declaration cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{7-13=}}
+// expected-error@-2 {{generic parameter name cannot be qualified with a module selector}} expected-note@-2 {{remove module selector from this name}} {{19-25=}}
 
 typealias main::decl5 = main::Bool
-// expected-error@-1 {{name of typealias declaration cannot be qualified with module selector}}
+// expected-error@-1 {{name in typealias declaration cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{11-17=}}
 // expected-error@-2 {{type 'Bool' is not imported through module 'main'}}
 // expected-note@-3 {{did you mean module 'Swift'?}} {{25-29=Swift}}
 
 protocol main::decl6 {
-  // expected-error@-1 {{name of protocol declaration cannot be qualified with module selector}}
+  // expected-error@-1 {{name in protocol declaration cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{10-16=}}
 
   associatedtype main::decl6a
-  // expected-error@-1 {{name of associatedtype declaration cannot be qualified with module selector}}
+  // expected-error@-1 {{name in associatedtype declaration cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{18-24=}}
 }
 
 let main::decl7 = 7
-// expected-error@-1 {{name of constant declaration cannot be qualified with module selector}}
+// expected-error@-1 {{name in constant declaration cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{5-11=}}
 
 var main::decl8 = 8 {
-// expected-error@-1 {{name of variable declaration cannot be qualified with module selector}}
+// expected-error@-1 {{name in variable declaration cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{5-11=}}
 
   willSet(main::newValue) {}
-  // expected-error@-1 {{name of accessor parameter declaration cannot be qualified with module selector}}
+  // expected-error@-1 {{parameter name cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{11-17=}}
 
   didSet(main::oldValue) {}
-  // expected-error@-1 {{name of accessor parameter declaration cannot be qualified with module selector}}
+  // expected-error@-1 {{parameter name cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{10-16=}}
 }
 
 struct Parent {
   func main::decl1() {}
-  // expected-error@-1 {{name of function declaration cannot be qualified with module selector}}
+  // expected-error@-1 {{name in function declaration cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{8-14=}}
 
   enum main::decl2 {
-  // expected-error@-1 {{name of enum declaration cannot be qualified with module selector}}
+  // expected-error@-1 {{name in enum declaration cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{8-14=}}
 
     case main::decl2a
-    // expected-error@-1 {{name of enum 'case' declaration cannot be qualified with module selector}}
+    // expected-error@-1 {{name in enum 'case' declaration cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{10-16=}}
   }
 
   struct main::decl3 {}
-  // expected-error@-1 {{name of struct declaration cannot be qualified with module selector}}
+  // expected-error@-1 {{name in struct declaration cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{10-16=}}
 
   class main::decl4 {}
-  // expected-error@-1 {{name of class declaration cannot be qualified with module selector}}
+  // expected-error@-1 {{name in class declaration cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{9-15=}}
 
   typealias main::decl5 = main::Bool
-  // expected-error@-1 {{name of typealias declaration cannot be qualified with module selector}}
+  // expected-error@-1 {{name in typealias declaration cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{13-19=}}
   // expected-error@-2 {{type 'Bool' is not imported through module 'main'}}
   // expected-note@-3 {{did you mean module 'Swift'?}} {{27-31=Swift}}
 }
 
 @_swift_native_objc_runtime_base(main::BaseClass)
-// expected-error@-1 {{Objective-C class name in @_swift_native_objc_runtime_base}}
+// expected-error@-1 {{Objective-C name cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{34-40=}}
 class C1 {}
 
 infix operator <<<<< : Swift::AdditionPrecedence
-// expected-error@-1 {{precedence group specifier cannot be qualified with module selector}}
+// expected-error@-1 {{precedence group name cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{24-31=}}
 
 precedencegroup main::PG1 {
-// expected-error@-1 {{name of precedence group declaration cannot be qualified with module selector}}
+// expected-error@-1 {{precedence group name cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{17-23=}}
 
   higherThan: Swift::AdditionPrecedence
-  // expected-error@-1 {{precedence group specifier cannot be qualified with module selector}}
+  // expected-error@-1 {{precedence group name cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{15-22=}}
 }
 
 func badModuleNames() {
@@ -490,13 +492,13 @@ func badModuleNames() {
 }
 
 @_spi(main::Private)
-// expected-error@-1 {{name of SPI group declaration cannot be qualified with module selector}} {{7-13=}}
+// expected-error@-1 {{SPI group cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{7-13=}}
 public struct BadImplementsAttr: CustomStringConvertible {
   @_implements(CustomStringConvertible, Swift::description)
-  // expected-error@-1 {{name cannot be qualified with module selector here}} {{41-48=}}
+  // expected-error@-1 {{name of sibling declaration cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{41-48=}}
   public var stringValue: String { fatalError() }
 
   @_specialize(spi: main::Private, where T == Swift::Int)
-  // expected-error@-1 {{name of SPI group declaration cannot be qualified with module selector}} {{21-27=}}
+  // expected-error@-1 {{SPI group cannot be qualified with a module selector}} expected-note@-1 {{remove module selector from this name}} {{21-27=}}
   public func fn<T>() -> T { fatalError() }
 }

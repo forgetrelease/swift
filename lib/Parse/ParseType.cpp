@@ -701,7 +701,7 @@ Parser::parseTypeIdentifier(bool isParsingQualifiedDeclBaseType) {
     DeclNameLoc Loc;
     DeclNameRef Name =
         parseDeclNameRef(Loc, diag::expected_identifier_in_dotted_type,
-                         DeclNameFlag::AllowModuleSelector);
+                         {});
     if (!Name)
       Status.setIsParseError();
 
@@ -1530,6 +1530,9 @@ bool Parser::canParseTypeIdentifierOrTypeComposition() {
 }
 
 bool Parser::canParseSimpleTypeIdentifier() {
+  // Parse a module selector, if present.
+  parseModuleSelector(ModuleSelectorReason::Allowed);
+  
   // Parse an identifier.
   if (!Tok.isAny(tok::identifier, tok::kw_Self, tok::kw_Any, tok::code_complete))
     return false;
