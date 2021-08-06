@@ -617,4 +617,33 @@ foo</DeclNameRef></IdentifierExpr>()</FunctionCallExpr><IfConfigDecl><IfConfigCl
   .<DeclNameRef>member</DeclNameRef></MemberAccessExpr></IfConfigClause><IfConfigClause>
 #else<FunctionCallExpr><MemberAccessExpr>
   .<DeclNameRef>baz</DeclNameRef></MemberAccessExpr>() <ClosureExpr>{}</ClosureExpr></FunctionCallExpr></IfConfigClause>
-#endif</IfConfigDecl></PostfixIfConfigExpr>
+#endif</IfConfigDecl></PostfixIfConfigExpr><VariableDecl>
+
+let <PatternBinding><IdentifierPattern>magnitude</IdentifierPattern><TypeAnnotation>: <MemberTypeIdentifier><SimpleTypeIdentifier><DeclNameRef><ModuleSelector>Swift::</ModuleSelector>Int</DeclNameRef></SimpleTypeIdentifier>.<DeclNameRef><ModuleSelector>Swift::</ModuleSelector>Magnitude </DeclNameRef></MemberTypeIdentifier></TypeAnnotation><InitializerClause>= <IntegerLiteralExpr>42</IntegerLiteralExpr></InitializerClause></PatternBinding></VariableDecl><ExtensionDecl>
+
+extension <SimpleTypeIdentifier><DeclNameRef><ModuleSelector>ABC::</ModuleSelector>Z</DeclNameRef></SimpleTypeIdentifier><TypeInheritanceClause>: <InheritedType><SimpleTypeIdentifier><DeclNameRef><ModuleSelector>Swift::</ModuleSelector>Equatable </DeclNameRef></SimpleTypeIdentifier></InheritedType></TypeInheritanceClause><MemberDeclBlock>{<MemberDeclListItem><FunctionDecl><Attribute>
+  @_implements(<ImplementsAttributeArguments><SimpleTypeIdentifier><DeclNameRef><ModuleSelector>Swift::</ModuleSelector>Equatable</DeclNameRef></SimpleTypeIdentifier>, <DeclNameRef>==<DeclNameArguments>(<DeclNameArgument>_:</DeclNameArgument><DeclNameArgument>_:</DeclNameArgument>)</DeclNameArguments></DeclNameRef></ImplementsAttributeArguments>)</Attribute><DeclModifier>
+  public </DeclModifier><DeclModifier>static </DeclModifier>func equals<FunctionSignature><ParameterClause>(<FunctionParameter>_: <SimpleTypeIdentifier><DeclNameRef><ModuleSelector>ABC::</ModuleSelector>Z</DeclNameRef></SimpleTypeIdentifier>, </FunctionParameter><FunctionParameter>_: <SimpleTypeIdentifier><DeclNameRef>Z</DeclNameRef></SimpleTypeIdentifier></FunctionParameter>) </ParameterClause><ReturnClause>-> <SimpleTypeIdentifier><DeclNameRef><ModuleSelector>Swift::</ModuleSelector>Bool </DeclNameRef></SimpleTypeIdentifier></ReturnClause></FunctionSignature><CodeBlock>{<FunctionCallExpr><IdentifierExpr><DeclNameRef><ModuleSelector>
+    Swift::</ModuleSelector>fatalError</DeclNameRef></IdentifierExpr>()</FunctionCallExpr>
+  }</CodeBlock></FunctionDecl></MemberDeclListItem><MemberDeclListItem><FunctionDecl><Attribute>
+
+  @_dynamicReplacement(<NamedAttributeStringArgument>for: <DeclNameRef><ModuleSelector>ABC::</ModuleSelector>negate<DeclNameArguments>()</DeclNameArguments></DeclNameRef></NamedAttributeStringArgument>)</Attribute><DeclModifier>
+  mutating </DeclModifier>func myNegate<FunctionSignature><ParameterClause>() </ParameterClause></FunctionSignature><CodeBlock>{<VariableDecl>
+    let <PatternBinding><IdentifierPattern>fn</IdentifierPattern><TypeAnnotation>: <FunctionType>(<TupleTypeElement><SimpleTypeIdentifier><DeclNameRef><ModuleSelector>Swift::</ModuleSelector>Int</DeclNameRef></SimpleTypeIdentifier>, </TupleTypeElement><TupleTypeElement><SimpleTypeIdentifier><DeclNameRef><ModuleSelector>Swift::</ModuleSelector>Int</DeclNameRef></SimpleTypeIdentifier></TupleTypeElement>) -> <SimpleTypeIdentifier><DeclNameRef><ModuleSelector>Swift::</ModuleSelector>Int </DeclNameRef></SimpleTypeIdentifier></FunctionType></TypeAnnotation><InitializerClause>= <TupleExpr>(<TupleExprElement><IdentifierExpr><DeclNameRef><ModuleSelector>Swift::</ModuleSelector>+</DeclNameRef></IdentifierExpr></TupleExprElement>)</TupleExpr></InitializerClause></PatternBinding></VariableDecl><VariableDecl>
+
+    let <PatternBinding><IdentifierPattern>magnitude</IdentifierPattern><TypeAnnotation>: <MemberTypeIdentifier><SimpleTypeIdentifier><DeclNameRef>Int</DeclNameRef></SimpleTypeIdentifier>.<DeclNameRef><ModuleSelector>Swift::</ModuleSelector>Magnitude </DeclNameRef></MemberTypeIdentifier></TypeAnnotation><InitializerClause>= <IdentifierExpr><DeclNameRef><ModuleSelector>round_trip_parse_gen::</ModuleSelector>magnitude</DeclNameRef></IdentifierExpr></InitializerClause></PatternBinding></VariableDecl><IfStmt>
+
+    if <ConditionElement><FunctionCallExpr><MemberAccessExpr><IdentifierExpr><DeclNameRef><ModuleSelector>Swift::</ModuleSelector>Bool</DeclNameRef></IdentifierExpr>.<DeclNameRef><ModuleSelector>Swift::</ModuleSelector>random</DeclNameRef></MemberAccessExpr>() </FunctionCallExpr></ConditionElement><CodeBlock>{<FunctionCallExpr><MemberAccessExpr><IdentifierExpr><DeclNameRef>
+      self</DeclNameRef></IdentifierExpr>.<DeclNameRef><ModuleSelector>round_trip_parse_gen::</ModuleSelector>negate</DeclNameRef></MemberAccessExpr>()</FunctionCallExpr>
+    }</CodeBlock>
+    else <CodeBlock>{<SequenceExpr><IdentifierExpr><DeclNameRef>
+      self </DeclNameRef></IdentifierExpr><AssignmentExpr>= </AssignmentExpr><FunctionCallExpr><IdentifierExpr><DeclNameRef><ModuleSelector>ABC::</ModuleSelector>Z</DeclNameRef></IdentifierExpr>(<TupleExprElement>value: <MemberAccessExpr>.<DeclNameRef><ModuleSelector>Swift::</ModuleSelector>min</DeclNameRef></MemberAccessExpr></TupleExprElement>)</FunctionCallExpr></SequenceExpr><SequenceExpr><IdentifierExpr><DeclNameRef>
+      self </DeclNameRef></IdentifierExpr><AssignmentExpr>= </AssignmentExpr><FunctionCallExpr><MemberAccessExpr><IdentifierExpr><DeclNameRef>A</DeclNameRef></IdentifierExpr>.<DeclNameRef><ModuleSelector>ABC::</ModuleSelector>init</DeclNameRef></MemberAccessExpr>(<TupleExprElement>value: <MemberAccessExpr>.<DeclNameRef>min</DeclNameRef></MemberAccessExpr></TupleExprElement>)</FunctionCallExpr></SequenceExpr>
+    }</CodeBlock></IfStmt><FunctionCallExpr><MemberAccessExpr><IdentifierExpr><DeclNameRef>
+
+    self</DeclNameRef></IdentifierExpr>.<DeclNameRef><ModuleSelector>ABC::</ModuleSelector>myNegate</DeclNameRef></MemberAccessExpr>()</FunctionCallExpr><FunctionCallExpr><IdentifierExpr><DeclNameRef><ModuleSelector>
+
+    Swift::</ModuleSelector>fatalError</DeclNameRef></IdentifierExpr>()</FunctionCallExpr>
+  }</CodeBlock></FunctionDecl></MemberDeclListItem>
+}</MemberDeclBlock></ExtensionDecl>
+

@@ -618,3 +618,31 @@ foo()
 #else
   .baz() {}
 #endif
+
+let magnitude: Swift::Int.Swift::Magnitude = 42
+
+extension ABC::Z: Swift::Equatable {
+  @_implements(Swift::Equatable, ==(_:_:))
+  public static func equals(_: ABC::Z, _: Z) -> Swift::Bool {
+    Swift::fatalError()
+  }
+
+  @_dynamicReplacement(for: ABC::negate())
+  mutating func myNegate() {
+    let fn: (Swift::Int, Swift::Int) -> Swift::Int = (Swift::+)
+
+    let magnitude: Int.Swift::Magnitude = round_trip_parse_gen::magnitude
+
+    if Swift::Bool.Swift::random() {
+      self.round_trip_parse_gen::negate()
+    }
+    else {
+      self = ABC::Z(value: .Swift::min)
+      self = A.ABC::init(value: .min)
+    }
+
+    self.ABC::myNegate()
+
+    Swift::fatalError()
+  }
+}

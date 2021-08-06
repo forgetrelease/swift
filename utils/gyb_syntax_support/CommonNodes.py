@@ -52,6 +52,13 @@ COMMON_NODES = [
                    requires_leading_newline=True),
          ]),
 
+    # module-selector -> identifier '::'
+    Node('ModuleSelector', kind='Syntax',
+         children=[
+             Child('ModuleName', kind='IdentifierToken'),
+             Child('SelectorOperator', kind='ColonColonToken'),
+         ]),
+
     # decl-name-arguments -> '(' declname-argument-list ')'
     # decl-name-argument-list -> declname-argument*
     # decl-name-argument -> identifier ':'
@@ -77,7 +84,7 @@ COMMON_NODES = [
     # decl-name-ref -> module-selector? token /* usually identifier */ decl-name-arguments?
     Node('DeclNameRef', kind='Syntax',
          children=[
-             # Child('Module', kind='ModuleSelector', is_optional=True),
+             Child('Module', kind='ModuleSelector', is_optional=True),
              Child('BaseName', kind='Token'),
              Child('ArgLabels', kind='DeclNameArguments', is_optional=True),
          ]),

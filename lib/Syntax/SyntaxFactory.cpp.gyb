@@ -274,8 +274,15 @@ DeclNameRefSyntax SyntaxFactory::makeDeclNameRef(Optional<StringRef> ModuleName,
                                                  StringRef BaseName,
                                                  StringRef LeadingTrivia,
                                                  StringRef TrailingTrivia) {
+  Optional<ModuleSelectorSyntax> selector;
+  if (ModuleName) {
+    auto moduleIdent = makeIdentifier(*ModuleName, LeadingTrivia, "");
+    auto colonColon = makeColonColonToken("", "");
+    selector.emplace(makeModuleSelector(moduleIdent, colonColon));
+    LeadingTrivia = "";
+  }
   auto baseNameIdent = makeIdentifier(BaseName, LeadingTrivia, TrailingTrivia);
-  return makeDeclNameRef(baseNameIdent, None);
+  return makeDeclNameRef(selector, baseNameIdent, None);
 }
 
 TypeSyntax SyntaxFactory::makeTypeIdentifier(StringRef TypeName,

@@ -2295,6 +2295,9 @@ parseModuleSelector(ModuleSelectorReason reason, StringRef declKindName) {
                 tok::r_paren, tok::r_brace, tok::r_angle, tok::r_square))
     return None;
 
+  SyntaxParsingContext selectorContext(SyntaxContext,
+                                       SyntaxKind::ModuleSelector);
+
   // We will parse the selector whether or not it's allowed, then early return
   // if it's disallowed, then diagnose any other errors in what we parsed. This
   // will make sure we always consume the module selector's tokens, but don't
@@ -2307,6 +2310,7 @@ parseModuleSelector(ModuleSelectorReason reason, StringRef declKindName) {
     // If we are only supposed to consume invalid selectors, leave this for
     // later.
     if (reason == ModuleSelectorReason::InvalidOnly) {
+      selectorContext.disable();
       return None;
     }
 

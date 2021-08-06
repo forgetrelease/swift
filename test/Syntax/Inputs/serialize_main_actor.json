@@ -131,6 +131,7 @@
                                                             {
                                                               "kind": "DeclNameRef",
                                                               "layout": [
+                                                                null,
                                                                 {
                                                                   "tokenKind": {
                                                                     "kind": "identifier",
@@ -197,6 +198,7 @@
                                                         {
                                                           "kind": "DeclNameRef",
                                                           "layout": [
+                                                            null,
                                                             {
                                                               "tokenKind": {
                                                                 "kind": "identifier",
@@ -394,6 +396,7 @@
                                                 {
                                                   "kind": "DeclNameRef",
                                                   "layout": [
+                                                    null,
                                                     {
                                                       "tokenKind": {
                                                         "kind": "identifier",
@@ -441,6 +444,7 @@
                                                             {
                                                               "kind": "DeclNameRef",
                                                               "layout": [
+                                                                null,
                                                                 {
                                                                   "tokenKind": {
                                                                     "kind": "identifier",
@@ -498,6 +502,7 @@
                                                                             {
                                                                               "kind": "DeclNameRef",
                                                                               "layout": [
+                                                                                null,
                                                                                 {
                                                                                   "tokenKind": {
                                                                                     "kind": "identifier",
@@ -555,6 +560,7 @@
                                                                             {
                                                                               "kind": "DeclNameRef",
                                                                               "layout": [
+                                                                                null,
                                                                                 {
                                                                                   "tokenKind": {
                                                                                     "kind": "identifier",

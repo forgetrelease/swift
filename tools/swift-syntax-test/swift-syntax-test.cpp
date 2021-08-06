@@ -581,6 +581,7 @@ int parseFile(
   Invocation.getLangOptions().ParseForSyntaxTreeOnly = true;
   Invocation.getLangOptions().VerifySyntaxTree = options::VerifySyntaxTree;
   Invocation.getLangOptions().DisablePoundIfEvaluation = true;
+  Invocation.getLangOptions().EnableExperimentalModuleSelector = true;
 
   Invocation.getFrontendOptions().InputsAndOutputs.addInputFile(InputFileName);
 
