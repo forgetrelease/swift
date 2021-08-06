@@ -1084,7 +1084,7 @@ public:
       swift::tok ClosingBrace, bool &DiscardAttribute, Optional<bool> &Exported,
       Optional<SpecializeAttr::SpecializationKind> &Kind,
       TrailingWhereClause *&TrailingWhereClause, DeclNameRef &targetFunction,
-      SmallVectorImpl<Identifier> &spiGroups,
+      DeclNameLoc &targetFunctionLoc, SmallVectorImpl<Identifier> &spiGroups,
       llvm::function_ref<bool(Parser &)> parseSILTargetName,
       llvm::function_ref<bool(Parser &)> parseSILSIPModule);
 

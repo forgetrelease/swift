@@ -1363,10 +1363,11 @@ PrivateImportAttr *PrivateImportAttr::create(ASTContext &Ctxt, SourceLoc AtLoc,
 DynamicReplacementAttr::DynamicReplacementAttr(SourceLoc atLoc,
                                                SourceRange baseRange,
                                                DeclNameRef name,
+                                               DeclNameLoc nameLoc,
                                                SourceRange parenRange)
     : DeclAttribute(DAK_DynamicReplacement, atLoc, baseRange,
                     /*Implicit=*/false),
-      ReplacedFunctionName(name) {
+      ReplacedFunctionName(name),  ReplacedFunctionNameLoc(nameLoc) {
   Bits.DynamicReplacementAttr.HasTrailingLocationInfo = true;
   getTrailingLocations()[0] = parenRange.Start;
   getTrailingLocations()[1] = parenRange.End;
@@ -1375,11 +1376,12 @@ DynamicReplacementAttr::DynamicReplacementAttr(SourceLoc atLoc,
 DynamicReplacementAttr *
 DynamicReplacementAttr::create(ASTContext &Ctx, SourceLoc AtLoc,
                                SourceLoc DynReplLoc, SourceLoc LParenLoc,
-                               DeclNameRef ReplacedFunction, SourceLoc RParenLoc) {
+                               DeclNameRef ReplacedFunction,
+                               DeclNameLoc nameLoc, SourceLoc RParenLoc) {
   void *mem = Ctx.Allocate(totalSizeToAlloc<SourceLoc>(2),
                            alignof(DynamicReplacementAttr));
   return new (mem) DynamicReplacementAttr(
-      AtLoc, SourceRange(DynReplLoc, RParenLoc), ReplacedFunction,
+      AtLoc, SourceRange(DynReplLoc, RParenLoc), ReplacedFunction, nameLoc,
       SourceRange(LParenLoc, RParenLoc));
 }
 
@@ -1636,11 +1638,14 @@ SpecializeAttr::SpecializeAttr(SourceLoc atLoc, SourceRange range,
                                SpecializationKind kind,
                                GenericSignature specializedSignature,
                                DeclNameRef targetFunctionName,
+                               DeclNameLoc targetFunctionNameLoc,
                                ArrayRef<Identifier> spiGroups)
     : DeclAttribute(DAK_Specialize, atLoc, range,
                     /*Implicit=*/clause == nullptr),
       trailingWhereClause(clause), specializedSignature(specializedSignature),
-      targetFunctionName(targetFunctionName), numSPIGroups(spiGroups.size()) {
+      targetFunctionName(targetFunctionName),
+      targetFunctionNameLoc(targetFunctionNameLoc),
+      numSPIGroups(spiGroups.size()) {
   std::uninitialized_copy(spiGroups.begin(), spiGroups.end(),
                           getTrailingObjects<Identifier>());
   Bits.SpecializeAttr.exported = exported;
@@ -1656,13 +1661,14 @@ SpecializeAttr *SpecializeAttr::create(ASTContext &Ctx, SourceLoc atLoc,
                                        TrailingWhereClause *clause,
                                        bool exported, SpecializationKind kind,
                                        DeclNameRef targetFunctionName,
+                                       DeclNameLoc targetFunctionNameLoc,
                                        ArrayRef<Identifier> spiGroups,
                                        GenericSignature specializedSignature) {
   unsigned size = totalSizeToAlloc<Identifier>(spiGroups.size());
   void *mem = Ctx.Allocate(size, alignof(SpecializeAttr));
   return new (mem)
       SpecializeAttr(atLoc, range, clause, exported, kind, specializedSignature,
-                     targetFunctionName, spiGroups);
+                     targetFunctionName, targetFunctionNameLoc, spiGroups);
 }
 
 SpecializeAttr *SpecializeAttr::create(ASTContext &ctx, bool exported,
@@ -1674,7 +1680,8 @@ SpecializeAttr *SpecializeAttr::create(ASTContext &ctx, bool exported,
   void *mem = ctx.Allocate(size, alignof(SpecializeAttr));
   return new (mem)
       SpecializeAttr(SourceLoc(), SourceRange(), nullptr, exported, kind,
-                     specializedSignature, targetFunctionName, spiGroups);
+                     specializedSignature, targetFunctionName, DeclNameLoc(),
+                     spiGroups);
 }
 
 SpecializeAttr *SpecializeAttr::create(
@@ -1685,7 +1692,8 @@ SpecializeAttr *SpecializeAttr::create(
   void *mem = ctx.Allocate(size, alignof(SpecializeAttr));
   auto *attr = new (mem)
       SpecializeAttr(SourceLoc(), SourceRange(), nullptr, exported, kind,
-                     specializedSignature, targetFunctionName, spiGroups);
+                     specializedSignature, targetFunctionName, DeclNameLoc(),
+                     spiGroups);
   attr->resolver = resolver;
   attr->resolverContextData = data;
   return attr;
