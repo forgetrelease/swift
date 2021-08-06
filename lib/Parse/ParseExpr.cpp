@@ -3151,7 +3151,8 @@ Expr *Parser::parseExprAnonClosureArg() {
   DeclNameLoc nameLoc;
   DeclNameRef nameRef =
       parseDeclNameRef(nameLoc, diag::impossible_parse,
-                       DeclNameFlag::AllowAnonymousParamNames);
+                       DeclNameFlag::AllowAnonymousParamNames,
+                       ModuleSelectorReason::ParamDecl);
 
   StringRef Name = nameRef.getBaseIdentifier().str();
   SourceLoc Loc = nameLoc.getBaseNameLoc();
