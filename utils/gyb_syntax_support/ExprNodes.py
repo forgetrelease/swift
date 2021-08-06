@@ -55,38 +55,10 @@ EXPR_NODES = [
              Child('Expression', kind='Expr'),
          ]),
 
-    # declname-arguments -> '(' declname-argument-list ')'
-    # declname-argument-list -> declname-argument*
-    # declname-argument -> identifier ':'
-    Node('DeclNameArgument', kind='Syntax',
-         children=[
-             Child('Name', kind='Token'),
-             Child('Colon', kind='ColonToken'),
-         ]),
-    Node('DeclNameArgumentList', kind='SyntaxCollection',
-         element='DeclNameArgument'),
-    Node('DeclNameArguments', kind='Syntax',
-         traits=['Parenthesized'],
-         children=[
-             Child('LeftParen', kind='LeftParenToken'),
-             Child('Arguments', kind='DeclNameArgumentList',
-                   collection_element_name='Argument'),
-             Child('RightParen', kind='RightParenToken'),
-         ]),
-
     # An identifier expression.
     Node('IdentifierExpr', kind='Expr',
          children=[
-             Child('Identifier', kind='Token',
-                   token_choices=[
-                       'IdentifierToken',
-                       'SelfToken',
-                       'CapitalSelfToken',
-                       'DollarIdentifierToken',
-                       'SpacedBinaryOperatorToken',
-                   ]),
-             Child('DeclNameArguments', kind='DeclNameArguments',
-                   is_optional=True),
+             Child('Identifier', kind='DeclNameRef'),
          ]),
 
     # An 'super' expression.
@@ -167,7 +139,7 @@ EXPR_NODES = [
     # symbolic-reference-expression -> identifier generic-argument-clause?
     Node('SymbolicReferenceExpr', kind='Expr',
          children=[
-             Child('Identifier', kind='IdentifierToken'),
+             Child('Identifier', kind='DeclNameRef'),
              Child('GenericArgumentClause', kind='GenericArgumentClause',
                    is_optional=True),
          ]),
@@ -315,9 +287,11 @@ EXPR_NODES = [
                        'PeriodToken', 'PrefixPeriodToken'
                    ]),
              # Name could be 'self'
-             Child("Name", kind='Token'),
-             Child('DeclNameArguments', kind='DeclNameArguments',
-                   is_optional=True),
+             Child("Name", kind='Syntax',
+                   node_choices=[
+                       Child("NameRef", kind='DeclNameRef'),
+                       Child("SelfRef", kind='SelfToken'),
+                   ]),
          ]),
 
     # is TypeName
@@ -561,7 +535,7 @@ EXPR_NODES = [
     # e.g. "a." or "a"
     Node('ObjcNamePiece', kind='Syntax',
          children=[
-             Child('Name', kind='IdentifierToken'),
+             Child('Name', kind='DeclNameRef'),
              Child('Dot', kind='PeriodToken', is_optional=True),
          ]),
 
@@ -604,7 +578,7 @@ EXPR_NODES = [
     # <#content#>
     Node('EditorPlaceholderExpr', kind='Expr',
          children=[
-             Child('Identifier', kind='IdentifierToken'),
+             Child('Identifier', kind='DeclNameRef'),
          ]),
     # #fileLiteral(a, b, c)
     Node('ObjectLiteralExpr', kind='Expr',

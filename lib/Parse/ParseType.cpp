@@ -889,6 +889,8 @@ Parser::parseTypeSimpleOrComposition(Diag<> MessageID, ParseTypeReason reason) {
 ParserResult<TypeRepr> Parser::parseAnyType() {
   SyntaxParsingContext IdentTypeCtxt(SyntaxContext,
                                      SyntaxKind::SimpleTypeIdentifier);
+  SyntaxParsingContext DeclNameRefCtxt(SyntaxContext, SyntaxKind::DeclNameRef);
+
   auto Loc = consumeToken(tok::kw_Any);
   auto TyR = CompositionTypeRepr::createEmptyComposition(Context, Loc);
   return makeParserResult(TyR);

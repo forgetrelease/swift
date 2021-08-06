@@ -270,12 +270,19 @@ SyntaxFactory::makeGenericParameter(TokenSyntax Name,
   return makeGenericParameter(None, Name, None, None, TrailingComma);
 }
 
+DeclNameRefSyntax SyntaxFactory::makeDeclNameRef(Optional<StringRef> ModuleName,
+                                                 StringRef BaseName,
+                                                 StringRef LeadingTrivia,
+                                                 StringRef TrailingTrivia) {
+  auto baseNameIdent = makeIdentifier(BaseName, LeadingTrivia, TrailingTrivia);
+  return makeDeclNameRef(baseNameIdent, None);
+}
+
 TypeSyntax SyntaxFactory::makeTypeIdentifier(StringRef TypeName,
                                              StringRef LeadingTrivia,
                                              StringRef TrailingTrivia) {
-  auto identifier =
-      makeIdentifier(TypeName, LeadingTrivia, TrailingTrivia);
-  return makeSimpleTypeIdentifier(identifier, None);
+  auto nameRef = makeDeclNameRef(None, TypeName, LeadingTrivia, TrailingTrivia);
+  return makeSimpleTypeIdentifier(nameRef, None);
 }
 
 TypeSyntax SyntaxFactory::makeAnyTypeIdentifier(StringRef LeadingTrivia,

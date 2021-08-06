@@ -64,7 +64,8 @@ postfix operator >>** : Class
 // expected-warning@-1 {{designated types are no longer used by the compiler}} {{23-30=}}
 
 infix operator  <*<<< : MediumPrecedence, &
-// expected-warning@-1 {{designated types are no longer used by the compiler}} {{41-44=}}
+// expected-error@-1 {{expected name in precedence group list}}
+// expected-error@-2 {{unknown declaration syntax exists in the source}}
 
 infix operator **^^ : MediumPrecedence // expected-note {{previous operator declaration here}}
 infix operator **^^ : InfixMagicOperatorProtocol // expected-error {{operator redeclared}}
@@ -85,4 +86,5 @@ postfix operator ^^*%% : MediumPrecedence, Class
 // expected-warning@-1 {{designated types are no longer used by the compiler}} {{24-49=}}
 
 infix operator <*<>*> : AdditionPrecedence,
-// expected-warning@-1 {{designated types are no longer used by the compiler}} {{43-44=}}
+// expected-error@-1 {{unknown declaration syntax exists in the source}}
+// expected-error@+1 {{expected name in precedence group list}}

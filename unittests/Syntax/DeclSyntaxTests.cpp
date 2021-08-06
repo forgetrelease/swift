@@ -109,7 +109,7 @@ TEST(DeclSyntaxTests, TypealiasMakeAPIs) {
             .addArgument(ElementArg)
             .build();
 
-    auto Array = Factory.makeIdentifier("Array", "", "");
+    auto Array = Factory.makeDeclNameRef(None, "Array", "", "");
     auto Array_Int = Factory.makeSimpleTypeIdentifier(Array, GenericArgs);
     auto TypeInit = Factory.makeTypeInitializerClause(Assignment, Array_Int);
     Factory
@@ -147,7 +147,7 @@ TEST(DeclSyntaxTests, TypealiasWithAPIs) {
           .addArgument(ElementArg)
           .build();
 
-  auto Array = Factory.makeIdentifier("Array", "", "");
+  auto Array = Factory.makeDeclNameRef(None, "Array", "", "");
   auto Array_Int = Factory.makeSimpleTypeIdentifier(Array, GenericArgs);
   auto Type_Init = Factory.makeTypeInitializerClause(Equal, Array_Int);
   {
@@ -193,7 +193,7 @@ TEST(DeclSyntaxTests, TypealiasBuilderAPIs) {
           .addArgument(ElementArg)
           .build();
 
-  auto Array = Factory.makeIdentifier("Array", "", "");
+  auto Array = Factory.makeDeclNameRef(None, "Array", "", "");
   auto Array_Int = Factory.makeSimpleTypeIdentifier(Array, GenericArgs);
   auto Type_Init = Factory.makeTypeInitializerClause(Equal, Array_Int);
   TypealiasDeclSyntaxBuilder(Arena)

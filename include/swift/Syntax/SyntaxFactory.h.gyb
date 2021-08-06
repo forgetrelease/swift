@@ -126,6 +126,14 @@ public:
       llvm::Optional<TokenSyntax> TrailingComma
   );
 
+  /// Creates a DeclNameRef with the indicated module selector (if any) and base
+  /// name.
+  DeclNameRefSyntax makeDeclNameRef(
+      llvm::Optional<StringRef> ModuleName,
+      StringRef BaseName,
+      StringRef LeadingTrivia,
+      StringRef TrailingTrivia);
+
   /// Creates a TypeIdentifierSyntax with the provided name and leading/trailing
   /// trivia.
   TypeSyntax makeTypeIdentifier(

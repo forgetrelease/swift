@@ -16,7 +16,7 @@
                   "tokenKind": {
                     "kind": "kw_struct"
                   },
-                  "leadingTrivia": "\/\/ RUN: %swift-syntax-test -input-source-filename %s -serialize-raw-tree > %t\n\/\/ RUN: diff %t %S\/Inputs\/serialize_struct_decl.json -u\n\n",
+                  "leadingTrivia": "\/\/ RUN: %swift-syntax-test -input-source-filename %s -serialize-raw-tree > %t\n\/\/ RUN: diff -u %S\/Inputs\/serialize_struct_decl.json %t\n\n",
                   "trailingTrivia": " ",
                   "presence": "Present"
                 },
@@ -98,12 +98,19 @@
                                               "kind": "SimpleTypeIdentifier",
                                               "layout": [
                                                 {
-                                                  "tokenKind": {
-                                                    "kind": "identifier",
-                                                    "text": "Int"
-                                                  },
-                                                  "leadingTrivia": "",
-                                                  "trailingTrivia": "",
+                                                  "kind": "DeclNameRef",
+                                                  "layout": [
+                                                    {
+                                                      "tokenKind": {
+                                                        "kind": "identifier",
+                                                        "text": "Int"
+                                                      },
+                                                      "leadingTrivia": "",
+                                                      "trailingTrivia": "",
+                                                      "presence": "Present"
+                                                    },
+                                                    null
+                                                  ],
                                                   "presence": "Present"
                                                 },
                                                 null
@@ -181,12 +188,19 @@
                                               "kind": "SimpleTypeIdentifier",
                                               "layout": [
                                                 {
-                                                  "tokenKind": {
-                                                    "kind": "identifier",
-                                                    "text": "Array"
-                                                  },
-                                                  "leadingTrivia": "",
-                                                  "trailingTrivia": " ",
+                                                  "kind": "DeclNameRef",
+                                                  "layout": [
+                                                    {
+                                                      "tokenKind": {
+                                                        "kind": "identifier",
+                                                        "text": "Array"
+                                                      },
+                                                      "leadingTrivia": "",
+                                                      "trailingTrivia": " ",
+                                                      "presence": "Present"
+                                                    },
+                                                    null
+                                                  ],
                                                   "presence": "Present"
                                                 },
                                                 {
@@ -210,12 +224,19 @@
                                                               "kind": "SimpleTypeIdentifier",
                                                               "layout": [
                                                                 {
-                                                                  "tokenKind": {
-                                                                    "kind": "identifier",
-                                                                    "text": "Int"
-                                                                  },
-                                                                  "leadingTrivia": "",
-                                                                  "trailingTrivia": " ",
+                                                                  "kind": "DeclNameRef",
+                                                                  "layout": [
+                                                                    {
+                                                                      "tokenKind": {
+                                                                        "kind": "identifier",
+                                                                        "text": "Int"
+                                                                      },
+                                                                      "leadingTrivia": "",
+                                                                      "trailingTrivia": " ",
+                                                                      "presence": "Present"
+                                                                    },
+                                                                    null
+                                                                  ],
                                                                   "presence": "Present"
                                                                 },
                                                                 null

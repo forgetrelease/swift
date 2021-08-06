@@ -11,7 +11,7 @@ using namespace swift::syntax;
 TupleExprElementSyntax getCannedArgument(const RC<SyntaxArena> &Arena) {
   SyntaxFactory Factory(Arena);
   auto X = Factory.makeIdentifier("x", "", "");
-  auto Foo = Factory.makeIdentifier("foo", "", "");
+  auto Foo = Factory.makeDeclNameRef(None, "foo", "", "");
   auto Colon = Factory.makeColonToken("", " ");
   auto SymbolicRef = Factory.makeSymbolicReferenceExpr(Foo, llvm::None);
   auto Comma = Factory.makeCommaToken("", " ");

@@ -203,11 +203,11 @@ TEST(TypeSyntaxTests, TupleBuilderAPIs) {
     Builder.useLeftParen(Factory.makeLeftParenToken("", ""));
     auto Comma = Factory.makeCommaToken("", " ");
     auto NoComma = TokenSyntax::missingToken(tok::comma, ",", Arena);
-    auto IntId = Factory.makeIdentifier("Int", "", "");
+    auto IntId = Factory.makeDeclNameRef(None, "Int", "", "");
     auto IntType = Factory.makeSimpleTypeIdentifier(IntId, None);
     auto Int = Factory.makeTupleTypeElement(IntType, NoComma);
     auto IntWithComma = Factory.makeTupleTypeElement(IntType, Comma);
-    auto StringId = Factory.makeIdentifier("String", "", "");
+    auto StringId = Factory.makeDeclNameRef(None, "String", "", "");
     auto StringType = Factory.makeSimpleTypeIdentifier(StringId, None);
     auto String = Factory.makeTupleTypeElement(StringType, Comma);
     Builder.addElement(IntWithComma);

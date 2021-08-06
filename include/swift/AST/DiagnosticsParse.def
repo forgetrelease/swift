@@ -435,16 +435,19 @@ ERROR(deprecated_operator_body_use_group,PointsToFirstBadToken,
       "use a precedence group instead", ())
 ERROR(operator_decl_no_fixity,none,
       "operator must be declared as 'prefix', 'postfix', or 'infix'", ())
-ERROR(operator_decl_expected_precedencegroup, none,
-      "expected precedence group name after ':' in operator declaration", ())
 
 WARNING(operator_decl_remove_designated_types,none,
         "designated types are no longer used by the compiler; please remove "
         "the designated type list from this operator declaration", ())
 
-// PrecedenceGroup
 ERROR(precedencegroup_not_infix,none,
       "only infix operators may declare a precedence", ())
+ERROR(precedencegroup_too_many,none,
+      "infix operators may declare only one precedence", ())
+ERROR(expected_group_name_in_precedencegroup_list,none,
+      "expected name in precedence group list", ())
+
+// PrecedenceGroup
 ERROR(expected_precedencegroup_name,none,
       "expected identifier after 'precedencegroup'", ())
 ERROR(expected_precedencegroup_lbrace,none,
@@ -463,9 +466,6 @@ ERROR(expected_precedencegroup_associativity,none,
       "expected 'none', 'left', or 'right' after 'associativity'", ())
 ERROR(expected_precedencegroup_assignment,none,
       "expected 'true' or 'false' after 'assignment'", ())
-ERROR(expected_precedencegroup_relation,none,
-      "expected name of related precedence group after '%0'",
-      (StringRef))
 
 // SIL
 ERROR(expected_sil_keyword,none,
@@ -1855,6 +1855,10 @@ ERROR(expected_closure_literal,none,
 
 ERROR(expected_multiple_closures_block_rbrace,none,
       "expected '}' at the end of a trailing closures block", ())
+
+ERROR(impossible_parse,none,
+      "parser entered impossible state; please file a bug report with this "
+      "source file", ())
 
 #define UNDEFINE_DIAGNOSTIC_MACROS
 #include "DefineDiagnosticMacros.h"

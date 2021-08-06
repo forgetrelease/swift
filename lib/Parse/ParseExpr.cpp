@@ -1126,7 +1126,9 @@ Parser::parseExprPostfixSuffix(ParserResult<Expr> Result, bool isExprBasic,
       // Handle "x.42" - a tuple index.
       if (Tok.is(tok::integer_literal)) {
         DeclNameRef name(Context.getIdentifier(Tok.getText()));
-        SourceLoc nameLoc = consumeToken(tok::integer_literal);
+        SourceLoc nameLoc =
+            (SyntaxParsingContext(SyntaxContext, SyntaxKind::DeclNameRef),
+             consumeToken(tok::integer_literal));
         SyntaxContext->createNodeInPlace(SyntaxKind::MemberAccessExpr);
 
         // Don't allow '.<integer literal>' following a numeric literal
@@ -2250,6 +2252,8 @@ static bool tryParseArgLabelList(Parser &P, Parser::DeclNameOptions flags,
 DeclNameRef Parser::parseDeclNameRef(DeclNameLoc &loc,
                                      const Diagnostic &diag,
                                      DeclNameOptions flags) {
+  SyntaxParsingContext declNameRefCtxt(SyntaxContext, SyntaxKind::DeclNameRef);
+
   // Consume the base name.
   DeclBaseName baseName;
   SourceLoc baseNameLoc;
@@ -2257,6 +2261,10 @@ DeclNameRef Parser::parseDeclNameRef(DeclNameLoc &loc,
     Identifier baseNameId;
     baseNameLoc = consumeIdentifier(baseNameId, /*diagnoseDollarPrefix=*/false);
     baseName = baseNameId;
+  } else if (flags.contains(DeclNameFlag::AllowAnonymousParamNames)
+             && Tok.is(tok::dollarident)) {
+    baseName = Context.getIdentifier(Tok.getText());
+    baseNameLoc = consumeToken(tok::dollarident);
   } else if (flags.contains(DeclNameFlag::AllowOperators) &&
              Tok.isAnyOperator()) {
     baseName = Context.getIdentifier(Tok.getText());
@@ -3005,8 +3013,14 @@ ParserResult<Expr> Parser::parseExprClosure() {
 ///     dollarident
 Expr *Parser::parseExprAnonClosureArg() {
   SyntaxParsingContext ExprContext(SyntaxContext, SyntaxKind::IdentifierExpr);
-  StringRef Name = Tok.getText();
-  SourceLoc Loc = consumeToken(tok::dollarident);
+
+  DeclNameLoc nameLoc;
+  DeclNameRef nameRef =
+      parseDeclNameRef(nameLoc, diag::impossible_parse,
+                       DeclNameFlag::AllowAnonymousParamNames);
+
+  StringRef Name = nameRef.getBaseIdentifier().str();
+  SourceLoc Loc = nameLoc.getBaseNameLoc();
   assert(Name[0] == '$' && "Not a dollarident");
 
   // We know from the lexer that this is all-numeric.

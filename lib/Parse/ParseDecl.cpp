@@ -665,8 +665,6 @@ bool Parser::parseSpecializeAttributeArguments(
       }
       if (ParamLabel == "target") {
         if (!parseSILTargetName(*this)) {
-          SyntaxParsingContext ContentContext(SyntaxContext,
-                                              SyntaxKind::DeclName);
           DeclNameLoc loc;
           targetFunction = parseDeclNameRef(
               loc, diag::attr_specialize_expected_function,
@@ -2482,17 +2480,13 @@ bool Parser::parseNewDeclAttribute(DeclAttributes &Attributes, SourceLoc AtLoc,
         return false;
       }
       consumeToken(tok::colon);
-      {
-        SyntaxParsingContext ContentContext(SyntaxContext,
-                                            SyntaxKind::DeclName);
 
-        DeclNameLoc loc;
-        replacedFunction = parseDeclNameRef(loc,
-            diag::attr_dynamic_replacement_expected_function,
-            DeclNameFlag::AllowZeroArgCompoundNames |
-            DeclNameFlag::AllowKeywordsUsingSpecialNames |
-            DeclNameFlag::AllowOperators);
-      }
+      DeclNameLoc loc;
+      replacedFunction = parseDeclNameRef(loc,
+          diag::attr_dynamic_replacement_expected_function,
+          DeclNameFlag::AllowZeroArgCompoundNames |
+          DeclNameFlag::AllowKeywordsUsingSpecialNames |
+          DeclNameFlag::AllowOperators);
     }
 
     // Parse the matching ')'.
@@ -8104,6 +8098,42 @@ Parser::parseDeclOperator(ParseDeclOptions Flags, DeclAttributes &Attributes) {
   return DCC.fixupParserResult(Result);
 }
 
+template <typename Fn>
+static ParserStatus
+parsePrecedenceGroupNameList(Parser &P, Fn takeGroupName) {
+  SourceLoc prevCommaLoc;
+  do {
+    SyntaxParsingContext NameCtxt(P.SyntaxContext,
+                                  SyntaxKind::PrecedenceGroupNameElement);
+    if (P.Tok.is(tok::code_complete)) {
+      if (P.CodeCompletion)
+        // FIXME: weird that we use PrecedenceGroupRelation, not NameElement.
+        P.CodeCompletion->
+            completeInPrecedenceGroup(SyntaxKind::PrecedenceGroupRelation);
+      P.consumeToken();
+      return makeParserCodeCompletionStatus();
+    }
+
+    DeclNameLoc nameLoc;
+    auto name = P.parseDeclNameRef(nameLoc,
+        diag::expected_group_name_in_precedencegroup_list, {});
+    if (!name)
+      return makeParserError();
+
+    takeGroupName(prevCommaLoc, name, nameLoc);
+
+    if (P.Tok.is(tok::code_complete)
+        && P.getEndOfPreviousLoc() == P.Tok.getLoc()) {
+      P.consumeToken();
+      return makeParserCodeCompletionStatus();
+    }
+    if (!P.consumeIf(tok::comma, prevCommaLoc))
+      break;
+  } while (true);
+  P.SyntaxContext->collectNodesInPlace(SyntaxKind::PrecedenceGroupNameList);
+  return makeParserSuccess();
+}
+
 ParserResult<OperatorDecl>
 Parser::parseDeclOperatorImpl(SourceLoc OperatorLoc, Identifier Name,
                               SourceLoc NameLoc, DeclAttributes &Attributes) {
@@ -8131,48 +8161,51 @@ Parser::parseDeclOperatorImpl(SourceLoc OperatorLoc, Identifier Name,
       return makeParserCodeCompletionResult<OperatorDecl>();
     }
 
-    SyntaxParsingContext ListCtxt(SyntaxContext, SyntaxKind::IdentifierList);
+    // Although we parse this as a list, we actually only want there to be zero
+    // (prefix/postfix) or one (infix) elements. These SourceLocs point to the
+    // ends of the elements that should not be there (including the introducer
+    // token for the first one) so that we can diagnose them all at once. If
+    // `typesEndLoc` never becomes valid, we didn't find any excess elements.
+    SourceLoc excessStartLoc = isInfix ? SourceLoc() : colonLoc;
+    SourceLoc excessEndLoc;
 
-    (void)parseIdentifier(groupName, groupLoc,
-                          diag::operator_decl_expected_precedencegroup,
-                          /*diagnoseDollarPrefix=*/false);
-
-    if (Context.TypeCheckerOpts.EnableOperatorDesignatedTypes) {
-      // Designated types have been removed; consume the list (mainly for source
-      // compatibility with old swiftinterfaces) and emit a warning.
-
-      // These SourceLocs point to the ends of the designated type list. If
-      // `typesEndLoc` never becomes valid, we didn't find any designated types.
-      SourceLoc typesStartLoc = Tok.getLoc();
-      SourceLoc typesEndLoc;
-
-      if (isPrefix || isPostfix) {
-        // These have no precedence group, so we already parsed the first entry
-        // in the designated types list. Retroactively include it in the range.
-        typesStartLoc = colonLoc;
-        typesEndLoc = groupLoc;
+    ParserStatus listStatus = parsePrecedenceGroupNameList(*this,
+        [&](SourceLoc prevCommaLoc, DeclNameRef name, DeclNameLoc nameLoc) {
+      if (!isPrefix && !isPostfix && groupName.empty()) {
+        // For infix operator declarations, the first element is assumed to be
+        // a real precedence group.
+        groupName = name.getBaseIdentifier();
+        groupLoc = nameLoc.getBaseNameLoc();
+      } else {
+        // This is an excess element. Update excessStartLoc and excessEndLoc to
+        // include it in the range to diagnose.
+        if (excessStartLoc.isInvalid())
+          excessStartLoc = prevCommaLoc;
+        excessEndLoc = nameLoc.getEndLoc();
       }
+    });
 
-      while (consumeIf(tok::comma, typesEndLoc)) {
-        if (Tok.isNot(tok::eof))
-          typesEndLoc = consumeToken();
-      }
+    if (listStatus.isErrorOrHasCompletion())
+      return makeParserResult<OperatorDecl>(listStatus, nullptr);
 
-      if (typesEndLoc.isValid())
-        diagnose(typesStartLoc, diag::operator_decl_remove_designated_types)
-            .fixItRemove({typesStartLoc, typesEndLoc});
-    } else {
-      if (isPrefix || isPostfix) {
-        diagnose(colonLoc, diag::precedencegroup_not_infix)
-            .fixItRemove({colonLoc, groupLoc});
-      }
-      // Nothing to complete here, simply consume the token.
-      if (Tok.is(tok::code_complete))
-        consumeToken();
+    // Nothing to complete here, simply consume the token.
+    if (Tok.is(tok::code_complete))
+      consumeToken();
+
+    if (excessEndLoc.isValid()) {
+      auto diagID = !isPrefix && !isPostfix ? diag::precedencegroup_too_many
+                                            : diag::precedencegroup_not_infix;
+
+      if (Context.TypeCheckerOpts.EnableOperatorDesignatedTypes)
+        diagID = diag::operator_decl_remove_designated_types;
+
+      diagnose(excessStartLoc, diagID)
+          .fixItRemove({excessStartLoc, excessEndLoc});
     }
   }
 
   // Diagnose deprecated operator body syntax `operator + { ... }`.
+  SourceLoc lastGoodLoc = PreviousLoc;
   SourceLoc lBraceLoc;
   if (consumeIf(tok::l_brace, lBraceLoc)) {
     if (isInfix && !Tok.is(tok::r_brace)) {
@@ -8180,7 +8213,6 @@ Parser::parseDeclOperatorImpl(SourceLoc OperatorLoc, Identifier Name,
     } else {
       auto Diag = diagnose(lBraceLoc, diag::deprecated_operator_body);
       if (Tok.is(tok::r_brace)) {
-        SourceLoc lastGoodLoc = groupLoc.isValid() ? groupLoc : NameLoc;
         SourceLoc lastGoodLocEnd = Lexer::getLocForEndOfToken(SourceMgr,
                                                               lastGoodLoc);
         SourceLoc rBraceEnd = Lexer::getLocForEndOfToken(SourceMgr, Tok.getLoc());
@@ -8420,28 +8452,14 @@ Parser::parseDeclPrecedenceGroup(ParseDeclOptions flags,
                                        : higherThanKeywordLoc);
       auto &relations = (isLowerThan ? lowerThan : higherThan);
 
-      do {
-        SyntaxParsingContext NameCtxt(SyntaxContext,
-                                      SyntaxKind::PrecedenceGroupNameElement);
-        if (checkCodeCompletion(SyntaxKind::PrecedenceGroupRelation)) {
-          return abortBody(/*hasCodeCompletion*/true);
-        }
-
-        if (Tok.isNot(tok::identifier)) {
-          diagnose(Tok, diag::expected_precedencegroup_relation, attrName);
-          return abortBody();
-        }
-        Identifier name;
-        SourceLoc nameLoc = consumeIdentifier(name,
-                                              /*diagnoseDollarPrefix=*/false);
-        relations.push_back({nameLoc, name, nullptr});
-
-        if (skipUnspacedCodeCompleteToken())
-          return abortBody(/*hasCodeCompletion*/true);
-        if (!consumeIf(tok::comma))
-          break;
-      } while (true);
-      SyntaxContext->collectNodesInPlace(SyntaxKind::PrecedenceGroupNameList);
+      ParserStatus listStatus = parsePrecedenceGroupNameList(*this,
+          [&](SourceLoc prevCommaLoc, DeclNameRef name, DeclNameLoc nameLoc) {
+        relations.push_back({nameLoc.getBaseNameLoc(), name.getBaseIdentifier(),
+                             nullptr});
+      });
+      if (listStatus.isErrorOrHasCompletion()) {
+        return abortBody(listStatus.hasCodeCompletion());
+      }
       continue;
     }
 

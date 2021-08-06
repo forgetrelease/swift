@@ -63,7 +63,7 @@ infix operator =#=
 
 infix operator +++=
 infix operator *** : A
-infix operator --- : ; // expected-error {{expected precedence group name after ':' in operator declaration}}
+infix operator --- : ; // expected-error {{expected name in precedence group list}}
 
 precedencegroup { // expected-error {{expected identifier after 'precedencegroup'}}
   associativity: right
@@ -82,7 +82,10 @@ precedencegroup D {
 }
 precedencegroup E {
   higherThan:
-} // expected-error {{expected name of related precedence group after 'higherThan'}}
+} // expected-error {{expected name in precedence group list}}
+precedencegroup EE {
+  higherThan: E,
+} // expected-error {{expected name in precedence group list}}
 
 precedencegroup F {
   higherThan: A, B, C
@@ -108,5 +111,4 @@ infix operator **<< : UndeclaredPrecedenceGroup
 
 protocol Proto {}
 infix operator *<*< : F, Proto
-// expected-error@-1 {{consecutive statements on a line must be separated by ';'}}
-// expected-error@-2 {{expected expression}}
+// expected-error@-1 {{infix operators may declare only one precedence}}
