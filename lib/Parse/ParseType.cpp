@@ -332,6 +332,9 @@ ParserResult<TypeRepr> Parser::parseSILBoxType(GenericParamList *generics,
 ///
 ParserResult<TypeRepr> Parser::parseType(
     Diag<> MessageID, ParseTypeReason reason) {
+  // If we have an invalid module selector, consume that first.
+  parseModuleSelector(ModuleSelectorReason::InvalidOnly);
+
   // Start a context for creating type syntax.
   SyntaxParsingContext TypeParsingContext(SyntaxContext,
                                           SyntaxContextKind::Type);
@@ -700,7 +703,8 @@ Parser::parseTypeIdentifier(bool isParsingQualifiedDeclBaseType) {
   while (true) {
     DeclNameLoc Loc;
     DeclNameRef Name =
-        parseDeclNameRef(Loc, diag::expected_identifier_in_dotted_type, {});
+        parseDeclNameRef(Loc, diag::expected_identifier_in_dotted_type,
+                         {});
     if (!Name)
       Status.setIsParseError();
 
@@ -889,6 +893,8 @@ Parser::parseTypeSimpleOrComposition(Diag<> MessageID, ParseTypeReason reason) {
 ParserResult<TypeRepr> Parser::parseAnyType() {
   SyntaxParsingContext IdentTypeCtxt(SyntaxContext,
                                      SyntaxKind::SimpleTypeIdentifier);
+  SyntaxParsingContext DeclNameRefCtxt(SyntaxContext, SyntaxKind::DeclNameRef);
+
   auto Loc = consumeToken(tok::kw_Any);
   auto TyR = CompositionTypeRepr::createEmptyComposition(Context, Loc);
   return makeParserResult(TyR);
@@ -1527,6 +1533,9 @@ bool Parser::canParseTypeIdentifierOrTypeComposition() {
 }
 
 bool Parser::canParseSimpleTypeIdentifier() {
+  // Parse a module selector, if present.
+  parseModuleSelector(ModuleSelectorReason::Allowed);
+  
   // Parse an identifier.
   if (!Tok.isAny(tok::identifier, tok::kw_Self, tok::kw_Any, tok::code_complete))
     return false;

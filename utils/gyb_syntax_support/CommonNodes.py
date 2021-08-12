@@ -51,4 +51,41 @@ COMMON_NODES = [
              Child('RightBrace', kind='RightBraceToken', 
                    requires_leading_newline=True),
          ]),
+
+    # module-selector -> identifier '::'
+    Node('ModuleSelector', kind='Syntax',
+         children=[
+             Child('ModuleName', kind='IdentifierToken'),
+             Child('SelectorOperator', kind='ColonColonToken'),
+         ]),
+
+    # decl-name-arguments -> '(' declname-argument-list ')'
+    # decl-name-argument-list -> declname-argument*
+    # decl-name-argument -> identifier ':'
+    Node('DeclNameArgument', kind='Syntax',
+         children=[
+             Child('Name', kind='Token'),
+             Child('Colon', kind='ColonToken'),
+         ]),
+    Node('DeclNameArgumentList', kind='SyntaxCollection',
+         element='DeclNameArgument'),
+    Node('DeclNameArguments', kind='Syntax',
+         traits=['Parenthesized'],
+         description="""
+         A list of argument labels without any arguments or types included.
+         """,
+         children=[
+             Child('LeftParen', kind='LeftParenToken'),
+             Child('Arguments', kind='DeclNameArgumentList',
+                   collection_element_name='Argument'),
+             Child('RightParen', kind='RightParenToken'),
+         ]),
+
+    # decl-name-ref -> module-selector? token /* usually identifier */ decl-name-arguments?
+    Node('DeclNameRef', kind='Syntax',
+         children=[
+             Child('Module', kind='ModuleSelector', is_optional=True),
+             Child('BaseName', kind='Token'),
+             Child('ArgLabels', kind='DeclNameArguments', is_optional=True),
+         ]),
 ]

@@ -3279,7 +3279,7 @@ void VarDeclUsageChecker::handleIfConfig(IfConfigDecl *ICD) {
         auto loc = declRef->getLoc();
         if (name.isSimpleName() && loc.isValid()) {
           auto *varDecl = dyn_cast_or_null<VarDecl>(
-            ASTScope::lookupSingleLocalDecl(SF, name.getFullName(), loc));
+            ASTScope::lookupSingleLocalDecl(SF, name, loc));
           if (varDecl)
             VDUC.addMark(varDecl, RK_Read|RK_Written);
         }

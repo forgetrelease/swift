@@ -274,8 +274,9 @@ void UnqualifiedLookupFactory::performUnqualifiedLookup() {
                                   DC->getParentSourceFile());
 
   if (Loc.isValid() && DC->getParentSourceFile()) {
-    // Operator lookup is always global, for the time being.
-    if (!Name.isOperator())
+    // Operator lookup is always global, for the time being. Unqualified lookups
+    // with module selectors always start at global scope.
+    if (!Name.isOperator() && !Name.hasModuleSelector())
       lookInASTScopes();
   } else {
     assert((DC->isModuleScopeContext() || !DC->getParentSourceFile()) &&
@@ -380,14 +381,27 @@ void UnqualifiedLookupFactory::setAsideUnavailableResults(
 }
 
 void UnqualifiedLookupFactory::addImportedResults(const DeclContext *const dc) {
+  assert(dc);
+
   using namespace namelookup;
   SmallVector<ValueDecl *, 8> CurModuleResults;
   auto resolutionKind = isOriginallyTypeLookup ? ResolutionKind::TypesOnly
                                                : ResolutionKind::Overloadable;
+  auto moduleToLookIn = dc;
+  if (Name.hasModuleSelector())
+    // FIXME: Should we look this up relative to dc?
+    // We'd need a new ResolutionKind.
+    moduleToLookIn =
+        dc->getASTContext().getLoadedModule(Name.getModuleSelector());
+  
+  // If we didn't find the module, it obviously can't have any results.
+  if (!moduleToLookIn)
+    return;
+
   auto nlOptions = NL_UnqualifiedDefault;
   if (options.contains(Flags::IncludeUsableFromInline))
     nlOptions |= NL_IncludeUsableFromInline;
-  lookupInModule(dc, Name.getFullName(), CurModuleResults,
+  lookupInModule(moduleToLookIn, Name.getFullName(), CurModuleResults,
                  NLKind::UnqualifiedLookup, resolutionKind, dc, nlOptions);
 
   // Always perform name shadowing for type lookup.
@@ -775,19 +789,21 @@ namespace {
 
 class ASTScopeDeclConsumerForLocalLookup
     : public AbstractASTScopeDeclConsumer {
-  DeclName name;
+  DeclNameRef name;
   bool stopAfterInnermostBraceStmt;
   SmallVectorImpl<ValueDecl *> &results;
 
 public:
   ASTScopeDeclConsumerForLocalLookup(
-      DeclName name, bool stopAfterInnermostBraceStmt,
+      DeclNameRef name, bool stopAfterInnermostBraceStmt,
       SmallVectorImpl<ValueDecl *> &results)
     : name(name), stopAfterInnermostBraceStmt(stopAfterInnermostBraceStmt),
       results(results) {}
 
   bool consume(ArrayRef<ValueDecl *> values,
                NullablePtr<DeclContext> baseDC) override {
+    if (name.hasModuleSelector()) return false;
+    
     for (auto *value: values) {
       bool foundMatch = false;
       if (auto *varDecl = dyn_cast<VarDecl>(value)) {
@@ -800,7 +816,7 @@ public:
         });
       }
 
-      if (!foundMatch && value->getName().matchesRef(name))
+      if (!foundMatch && value->getName().matchesRef(name.getFullName()))
         results.push_back(value);
     }
 
@@ -827,7 +843,7 @@ public:
 
 /// Lookup that only finds local declarations and does not trigger
 /// interface type computation.
-void ASTScope::lookupLocalDecls(SourceFile *sf, DeclName name, SourceLoc loc,
+void ASTScope::lookupLocalDecls(SourceFile *sf, DeclNameRef name, SourceLoc loc,
                                 bool stopAfterInnermostBraceStmt,
                                 SmallVectorImpl<ValueDecl *> &results) {
   ASTScopeDeclConsumerForLocalLookup consumer(name, stopAfterInnermostBraceStmt,
@@ -835,7 +851,7 @@ void ASTScope::lookupLocalDecls(SourceFile *sf, DeclName name, SourceLoc loc,
   ASTScope::unqualifiedLookup(sf, loc, consumer);
 }
 
-ValueDecl *ASTScope::lookupSingleLocalDecl(SourceFile *sf, DeclName name,
+ValueDecl *ASTScope::lookupSingleLocalDecl(SourceFile *sf, DeclNameRef name,
                                            SourceLoc loc) {
   SmallVector<ValueDecl *, 1> result;
   ASTScope::lookupLocalDecls(sf, name, loc,

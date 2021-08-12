@@ -4476,41 +4476,54 @@ llvm::Error DeclDeserializer::deserializeDeclCommon() {
         GenericSignatureID specializedSigID;
 
         ArrayRef<uint64_t> rawPieceIDs;
-        uint64_t numArgs;
+        uint8_t targetKind;
         uint64_t numSPIGroups;
         DeclID targetFunID;
 
         serialization::decls_block::SpecializeDeclAttrLayout::readRecord(
             scratch, exported, specializationKindVal, specializedSigID,
-            targetFunID, numArgs, numSPIGroups, rawPieceIDs);
+            targetFunID, targetKind, numSPIGroups, rawPieceIDs);
 
-        assert(rawPieceIDs.size() == numArgs + numSPIGroups ||
-               rawPieceIDs.size() == (numArgs - 1 + numSPIGroups));
         specializationKind = specializationKindVal
                                  ? SpecializeAttr::SpecializationKind::Partial
                                  : SpecializeAttr::SpecializationKind::Full;
+
+        SmallVector<Identifier, 4> identPieces;
+        // if targetKind == 1 or 2, the first piece is a DeclBaseName and
+        // getIdentifier() might crash.
+        for (auto id : rawPieceIDs.slice(targetKind == 0 ? 0 : 1))
+          identPieces.push_back(MF.getIdentifier(id));
+
+        assert(identPieces.size() >= numSPIGroups
+               && "has enough identPieces for SPI groups");
+        auto spis = makeArrayRef(identPieces).take_back(numSPIGroups);
+        auto nameIdents = makeArrayRef(identPieces).drop_back(numSPIGroups);
+
         // The 'target' parameter.
         DeclNameRef replacedFunctionName;
-        if (numArgs) {
-          bool numArgumentLabels = (numArgs == 1) ? 0 : numArgs - 2;
+        // 0 = no target; 1 = target has simple name; 2 = target has compound
+        // name.
+        if (targetKind == 0) {
+          assert(rawPieceIDs.size() == identPieces.size()
+                 && "no base names when no target");
+          assert(nameIdents.empty() && "no extra identifiers when no target");
+        } else {
+          assert(rawPieceIDs.size() == 1 + identPieces.size()
+                 && "one base name when there's a target");
           auto baseName = MF.getDeclBaseName(rawPieceIDs[0]);
-          SmallVector<Identifier, 4> pieces;
-          if (numArgumentLabels) {
-            for (auto pieceID : rawPieceIDs.slice(1, numArgumentLabels))
-              pieces.push_back(MF.getIdentifier(pieceID));
-          }
-          replacedFunctionName = (numArgs == 1)
-                                     ? DeclNameRef({baseName}) // simple name
-                                     : DeclNameRef({ctx, baseName, pieces});
-        }
 
-        SmallVector<Identifier, 4> spis;
-        if (numSPIGroups) {
-          auto numTargetFunctionPiecesToSkip =
-              (rawPieceIDs.size() == numArgs + numSPIGroups) ? numArgs
-                                                             : numArgs - 1;
-          for (auto id : rawPieceIDs.slice(numTargetFunctionPiecesToSkip))
-            spis.push_back(MF.getIdentifier(id));
+          assert(!nameIdents.empty() && "has module selector for target");
+          auto modSelector = nameIdents[0];
+          auto argLabels = nameIdents.drop_front(1);
+
+          if (targetKind == 1) {
+            assert(argLabels.empty() && "no arg labels with simple DeclName");
+            replacedFunctionName = DeclNameRef(ctx, modSelector, baseName);
+          } else {
+            assert(targetKind == 2 && "targetKind is a known value");
+            replacedFunctionName = DeclNameRef(ctx, modSelector, baseName,
+                                               argLabels);
+          }
         }
 
         auto specializedSig = MF.getGenericSignature(specializedSigID);
@@ -4528,15 +4541,18 @@ llvm::Error DeclDeserializer::deserializeDeclCommon() {
         serialization::decls_block::DynamicReplacementDeclAttrLayout::
             readRecord(scratch, isImplicit, replacedFunID, numArgs, rawPieceIDs);
 
-        auto baseName = MF.getDeclBaseName(rawPieceIDs[0]);
+        auto moduleSelector = MF.getIdentifier(rawPieceIDs[0]);
+        auto baseName = MF.getDeclBaseName(rawPieceIDs[1]);
         SmallVector<Identifier, 4> pieces;
-        for (auto pieceID : rawPieceIDs.slice(1))
+        for (auto pieceID : rawPieceIDs.slice(2))
           pieces.push_back(MF.getIdentifier(pieceID));
+
+        DeclNameRef replacedFunName(ctx, moduleSelector, baseName, pieces);
 
         assert(numArgs != 0);
         assert(!isImplicit && "Need to update for implicit");
-        Attr = DynamicReplacementAttr::create(
-            ctx, DeclNameRef({ ctx, baseName, pieces }), &MF, replacedFunID);
+        Attr = DynamicReplacementAttr::create(ctx, replacedFunName, &MF,
+                                              replacedFunID);
         break;
       }
 
@@ -4630,6 +4646,7 @@ llvm::Error DeclDeserializer::deserializeDeclCommon() {
 
       case decls_block::Derivative_DECL_ATTR: {
         bool isImplicit;
+        uint64_t origModuleSelectorId;
         uint64_t origNameId;
         bool hasAccessorKind;
         uint64_t rawAccessorKind;
@@ -4638,8 +4655,9 @@ llvm::Error DeclDeserializer::deserializeDeclCommon() {
         ArrayRef<uint64_t> parameters;
 
         serialization::decls_block::DerivativeDeclAttrLayout::readRecord(
-            scratch, isImplicit, origNameId, hasAccessorKind, rawAccessorKind,
-            origDeclId, rawDerivativeKind, parameters);
+            scratch, isImplicit, origModuleSelectorId, origNameId,
+            hasAccessorKind, rawAccessorKind, origDeclId, rawDerivativeKind,
+            parameters);
 
         Optional<AccessorKind> accessorKind = None;
         if (hasAccessorKind) {
@@ -4649,8 +4667,12 @@ llvm::Error DeclDeserializer::deserializeDeclCommon() {
           accessorKind = *maybeAccessorKind;
         }
 
-        DeclNameRefWithLoc origName{DeclNameRef(MF.getDeclBaseName(origNameId)),
-                                    DeclNameLoc(), accessorKind};
+        Identifier origModuleSelector = MF.getIdentifier(origModuleSelectorId);
+        DeclBaseName origBaseName = MF.getDeclBaseName(origNameId);
+        DeclNameRef origName(ctx, origModuleSelector, origBaseName);
+        DeclNameRefWithLoc origNameWithLoc{origName, DeclNameLoc(),
+                                           accessorKind};
+
         auto derivativeKind =
             getActualAutoDiffDerivativeFunctionKind(rawDerivativeKind);
         if (!derivativeKind)
@@ -4662,7 +4684,8 @@ llvm::Error DeclDeserializer::deserializeDeclCommon() {
 
         auto *derivativeAttr =
             DerivativeAttr::create(ctx, isImplicit, SourceLoc(), SourceRange(),
-                                   /*baseType*/ nullptr, origName, indices);
+                                   /*baseType*/ nullptr, origNameWithLoc,
+                                   indices);
         derivativeAttr->setOriginalFunctionResolver(&MF, origDeclId);
         derivativeAttr->setDerivativeKind(*derivativeKind);
         Attr = derivativeAttr;
@@ -4671,19 +4694,21 @@ llvm::Error DeclDeserializer::deserializeDeclCommon() {
 
       case decls_block::Transpose_DECL_ATTR: {
         bool isImplicit;
+        uint64_t origModSelId;
         uint64_t origNameId;
         DeclID origDeclId;
-        ArrayRef<uint64_t> parameters;
+        ArrayRef<uint64_t> params;
 
         serialization::decls_block::TransposeDeclAttrLayout::readRecord(
-            scratch, isImplicit, origNameId, origDeclId, parameters);
+            scratch, isImplicit, origModSelId, origNameId, origDeclId, params);
 
-        DeclNameRefWithLoc origName{
-            DeclNameRef(MF.getDeclBaseName(origNameId)), DeclNameLoc(), None};
+        DeclNameRef origNameRef(ctx, MF.getIdentifier(origModSelId),
+                                MF.getDeclBaseName(origNameId));
+        DeclNameRefWithLoc origName{origNameRef, DeclNameLoc(), None};
         auto *origDecl = cast<AbstractFunctionDecl>(MF.getDecl(origDeclId));
-        llvm::SmallBitVector parametersBitVector(parameters.size());
-        for (unsigned i : indices(parameters))
-          parametersBitVector[i] = parameters[i];
+        llvm::SmallBitVector parametersBitVector(params.size());
+        for (unsigned i : indices(params))
+          parametersBitVector[i] = params[i];
         auto *indices = IndexSubset::get(ctx, parametersBitVector);
         auto *transposeAttr =
             TransposeAttr::create(ctx, isImplicit, SourceLoc(), SourceRange(),

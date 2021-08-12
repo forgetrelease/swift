@@ -175,7 +175,7 @@ bool Parser::startsParameterName(bool isClosure) {
     // "isolated" can be an argument label, but it's also a contextual keyword,
     // so look ahead one more token (two total) see if we have a ':' that would
     // indicate that this is an argument label.
-    return lookahead<bool>(2, [&](CancellableBacktrackingScope &) {
+    return lookahead(2, [&](CancellableBacktrackingScope &) {
       if (Tok.is(tok::colon))
         return true; // isolated :
 
@@ -203,6 +203,12 @@ Parser::parseParameterClause(SourceLoc &leftParenLoc,
   assert(params.empty() && leftParenLoc.isInvalid() &&
          rightParenLoc.isInvalid() && "Must start with empty state");
   SyntaxParsingContext ParamClauseCtx(SyntaxContext, SyntaxKind::ParameterClause);
+
+  // Operators and closures cannot have API names. Enum elements cannot have
+  // internal names.
+  bool canHaveLabels = !(paramContext == ParameterContextKind::Operator ||
+                         paramContext == ParameterContextKind::Closure);
+  bool canHaveInternalName = paramContext != ParameterContextKind::EnumElement;
 
   // Consume the starting '(';
   leftParenLoc = consumeToken(tok::l_paren);
@@ -275,7 +281,7 @@ Parser::parseParameterClause(SourceLoc &leftParenLoc,
         }
 
         // is this 'isolated' token the identifier of an argument label?
-        bool partOfArgumentLabel = lookahead<bool>(1, [&](CancellableBacktrackingScope &) {
+        bool partOfArgumentLabel = lookahead(1, [&](CancellableBacktrackingScope &) {
           if (Tok.is(tok::colon))
             return true;  // isolated :
 
@@ -325,22 +331,25 @@ Parser::parseParameterClause(SourceLoc &leftParenLoc,
         .fixItReplace(Tok.getLoc(), "`" + Tok.getText().str() + "`");
     }
 
+    parseModuleSelector(canHaveLabels
+                      ? ModuleSelectorReason::ArgumentLabel
+                      : ModuleSelectorReason::ParamDecl);
+
     if (startsParameterName(isClosure)) {
       // identifier-or-none for the first name
       param.FirstNameLoc = consumeArgumentLabel(param.FirstName,
                                                 /*diagnoseDollarPrefix=*/!isClosure);
+
+      parseModuleSelector(ModuleSelectorReason::ParamDecl);
 
       // identifier-or-none? for the second name
       if (Tok.canBeArgumentLabel())
         param.SecondNameLoc = consumeArgumentLabel(param.SecondName,
                                                    /*diagnoseDollarPrefix=*/true);
 
-      // Operators, closures, and enum elements cannot have API names.
-      if ((paramContext == ParameterContextKind::Operator ||
-           paramContext == ParameterContextKind::Closure ||
-           paramContext == ParameterContextKind::EnumElement) &&
-          !param.FirstName.empty() &&
-          param.SecondNameLoc.isValid()) {
+      // Do we have two names in a parameter that can't have both?
+      if (!(canHaveLabels && canHaveInternalName) &&
+          !param.FirstName.empty() && param.SecondNameLoc.isValid()) {
         enum KeywordArgumentDiagnosticContextKind {
           Operator    = 0,
           Closure     = 1,
@@ -1101,6 +1110,12 @@ ParserResult<Pattern> Parser::parsePattern() {
   auto introducer = (InVarOrLetPattern != IVOLP_InVar
                      ? VarDecl::Introducer::Let
                      : VarDecl::Introducer::Var);
+  StringRef declNameKind = introducer == VarDecl::Introducer::Let
+                         ? "constant" : "variable";
+
+  // If there's a module selector here, consume and remove it.
+  parseModuleSelector(ModuleSelectorReason::NameInDecl, declNameKind);
+
   switch (Tok.getKind()) {
   case tok::l_paren:
     return parsePatternTuple();
@@ -1120,19 +1135,17 @@ ParserResult<Pattern> Parser::parsePattern() {
     }
     PatternCtx.setCreateSyntax(SyntaxKind::WildcardPattern);
     return makeParserResult(new (Context) AnyPattern(consumeToken(tok::kw__)));
-    
+
   case tok::identifier: {
     PatternCtx.setCreateSyntax(SyntaxKind::IdentifierPattern);
     Identifier name;
     SourceLoc loc = consumeIdentifier(name, /*diagnoseDollarPrefix=*/true);
     if (Tok.isIdentifierOrUnderscore() && !Tok.isContextualDeclKeyword())
-      diagnoseConsecutiveIDs(name.str(), loc,
-                             introducer == VarDecl::Introducer::Let
-                             ? "constant" : "variable");
+      diagnoseConsecutiveIDs(name.str(), loc, declNameKind);
 
     return makeParserResult(createBindingFromPattern(loc, name, introducer));
   }
-    
+
   case tok::code_complete:
     if (!CurDeclContext->isTypeContext()) {
       // This cannot be an overridden property, so just eat the token. We cannot
@@ -1168,7 +1181,7 @@ ParserResult<Pattern> Parser::parsePattern() {
     return makeParserResult(
         new (Context) BindingPattern(varLoc, isLet, subPattern.get()));
   }
-      
+
   default:
     if (Tok.isKeyword() &&
         (peekToken().is(tok::colon) || peekToken().is(tok::equal))) {
@@ -1200,6 +1213,10 @@ Parser::parsePatternTupleElement() {
   // If this element has a label, parse it.
   Identifier Label;
   SourceLoc LabelLoc;
+
+  parseModuleSelector(ModuleSelectorReason::NameInDecl,
+                      InVarOrLetPattern != IVOLP_InVar
+                      ? "constant" : "variable");
 
   // If the tuple element has a label, parse it.
   if (Tok.is(tok::identifier) && peekToken().is(tok::colon)) {

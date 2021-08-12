@@ -253,6 +253,8 @@ SYNTAX_NODE_SERIALIZATION_CODES = {
     'TargetFunctionEntry': 248,
     'PostfixIfConfigExpr': 250,
     'UnavailabilityCondition': 251,
+    'ModuleSelector': 252,
+    'DeclNameRef': 253,
 }
 
 

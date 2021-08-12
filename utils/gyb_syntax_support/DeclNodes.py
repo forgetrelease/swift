@@ -682,7 +682,7 @@ DECL_NODES = [
                    ''')
          ]),
 
-    # operator-decl -> attribute? modifiers? 'operator' operator
+    # operator-decl -> attribute? modifiers? 'operator' operator infix-operator-group?
     Node('OperatorDecl', kind='Decl', traits=['IdentifiedDecl'],
          description='A Swift `operator` declaration.',
          children=[
@@ -713,17 +713,15 @@ DECL_NODES = [
                    is_optional=True),
          ]),
 
-    Node('IdentifierList', kind='SyntaxCollection',
-         element='IdentifierToken'),
-
-    # infix-operator-group -> ':' identifier ','? identifier?
+    # infix-operator-group -> ':' precedence-group-name-list
     Node('OperatorPrecedenceAndTypes', kind='Syntax',
          description='''
          A clause to specify precedence group in infix operator declarations, and designated types in any operator declaration.
          ''',
          children=[
              Child('Colon', kind='ColonToken'),
-             Child('PrecedenceGroupAndDesignatedTypes', kind='IdentifierList',
+             Child('PrecedenceGroupAndDesignatedTypes',
+                   kind='PrecedenceGroupNameList',
                    collection_element_name='PrecedenceGroupAndDesignatedType',
                    description='''
                    The precedence group and designated types for this operator
@@ -798,12 +796,13 @@ DECL_NODES = [
          ]),
 
     # precedence-group-name-list ->
-    #    identifier (',' identifier)*
+    #    decl-name-ref (',' decl-name-ref)*
     Node('PrecedenceGroupNameList', kind='SyntaxCollection',
          element='PrecedenceGroupNameElement'),
     Node('PrecedenceGroupNameElement', kind='Syntax',
+         traits=['WithTrailingComma'],
          children=[
-             Child('Name', kind='IdentifierToken'),
+             Child('Name', kind='DeclNameRef'),
              Child('TrailingComma', kind='CommaToken',
                    is_optional=True),
          ]),

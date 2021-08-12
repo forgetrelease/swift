@@ -1500,6 +1500,9 @@ struct MemberLookupResult {
     /// This is a static member being access through a protocol metatype
     /// but its result type doesn't conform to this protocol.
     UR_InvalidStaticMemberOnProtocolMetatype,
+
+    /// The module selector in the `DeclNameRef` does not match this candidate.
+    UR_WrongModule
   };
 
   /// This is a list of considered (but rejected) candidates, along with a

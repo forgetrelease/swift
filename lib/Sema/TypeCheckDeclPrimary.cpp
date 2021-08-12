@@ -547,7 +547,8 @@ CheckRedeclarationRequest::evaluate(Evaluator &eval, ValueDecl *current) const {
     }
   } else if (currentDC->isLocalContext()) {
     if (!current->isImplicit()) {
-      ASTScope::lookupLocalDecls(currentFile, current->getBaseName(),
+      ASTScope::lookupLocalDecls(currentFile,
+                                 DeclNameRef(current->getBaseName()),
                                  current->getLoc(),
                                  /*stopAfterInnermostBraceStmt=*/true,
                                  otherDefinitions);

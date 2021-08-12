@@ -185,6 +185,10 @@ enum class FixKind : uint8_t {
   /// no access control.
   AllowInaccessibleMember,
 
+  /// If a module selector prevented us from selecting a member, pretend that it
+  /// was not specified.
+  AllowMemberFromWrongModule,
+
   /// Allow KeyPaths to use AnyObject as root type
   AllowAnyObjectKeyPathRoot,
 
@@ -1517,6 +1521,25 @@ public:
   static AllowInaccessibleMember *create(ConstraintSystem &cs, Type baseType,
                                          ValueDecl *member, DeclNameRef name,
                                          ConstraintLocator *locator);
+};
+
+class AllowMemberFromWrongModule final : public AllowInvalidMemberRef {
+  AllowMemberFromWrongModule(ConstraintSystem &cs, Type baseType,
+                             ValueDecl *member, DeclNameRef name,
+                             ConstraintLocator *locator)
+      : AllowInvalidMemberRef(cs, FixKind::AllowMemberFromWrongModule, baseType,
+                              member, name, locator) {}
+
+public:
+  std::string getName() const override {
+    return "allow reference to member from wrong module";
+  }
+
+  bool diagnose(const Solution &solution, bool asNote = false) const override;
+
+  static AllowMemberFromWrongModule *create(ConstraintSystem &cs, Type baseType,
+                                            ValueDecl *member, DeclNameRef name,
+                                            ConstraintLocator *locator);
 };
 
 class AllowAnyObjectKeyPathRoot final : public ConstraintFix {

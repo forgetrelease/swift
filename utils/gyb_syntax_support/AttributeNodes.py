@@ -140,7 +140,7 @@ ATTRIBUTE_NODES = [
                    description='The label of the argument'),
              Child('Colon', kind='ColonToken',
                    description='The colon separating the label and the value'),
-             Child('Delcname', kind='DeclName',
+             Child('Name', kind='DeclNameRef',
                    description='The value for this argument'),
              Child('TrailingComma', kind='CommaToken',
                    is_optional=True, description='''
@@ -163,22 +163,8 @@ ATTRIBUTE_NODES = [
                    description='The colon separating the label and the value'),
              Child('StringOrDeclname', kind='Syntax', node_choices=[
                  Child('String', kind='StringLiteralToken'),
-                 Child('Declname', kind='DeclName'),
+                 Child('Name', kind='DeclNameRef'),
              ]),
-         ]),
-    Node('DeclName', kind='Syntax', children=[
-         Child('DeclBaseName', kind='Syntax', description='''
-               The base name of the protocol\'s requirement.
-               ''',
-               node_choices=[
-                   Child('Identifier', kind='IdentifierToken'),
-                   Child('Operator', kind='PrefixOperatorToken'),
-               ]),
-         Child('DeclNameArguments', kind='DeclNameArguments',
-               is_optional=True, description='''
-               The argument labels of the protocol\'s requirement if it
-               is a function requirement.
-               '''),
          ]),
     # The argument of '@_implements(...)'
     # implements-attr-arguments -> simple-type-identifier ','
@@ -197,17 +183,8 @@ ATTRIBUTE_NODES = [
                    description='''
                    The comma separating the type and method name
                    '''),
-             Child('DeclBaseName', kind='Syntax', description='''
-                   The base name of the protocol\'s requirement.
-                   ''',
-                   node_choices=[
-                       Child('Identifier', kind='IdentifierToken'),
-                       Child('Operator', kind='PrefixOperatorToken'),
-                   ]),
-             Child('DeclNameArguments', kind='DeclNameArguments',
-                   is_optional=True, description='''
-                   The argument labels of the protocol\'s requirement if it
-                   is a function requirement.
+             Child('DeclName', kind='DeclNameRef', description='''
+                   The name of the protocol\'s requirement.
                    '''),
          ]),
 
@@ -343,7 +320,7 @@ ATTRIBUTE_NODES = [
     # qualified name syntax/parsing.
     #
     # qualified-decl-name ->
-    #     base-type? '.'? (identifier | operator) decl-name-arguments?
+    #     base-type? '.'? decl-name-ref
     # base-type ->
     #     member-type-identifier | base-type-identifier
     Node('QualifiedDeclName', kind='Syntax',
@@ -359,42 +336,8 @@ ATTRIBUTE_NODES = [
                    token_choices=[
                        'PeriodToken', 'PrefixPeriodToken'
                    ], is_optional=True),
-             Child('Name', kind='Token', description='''
-                   The base name of the referenced function.
-                   ''',
-                   token_choices=[
-                       'IdentifierToken',
-                       'UnspacedBinaryOperatorToken',
-                       'SpacedBinaryOperatorToken',
-                       'PrefixOperatorToken',
-                       'PostfixOperatorToken',
-                   ]),
-             Child('Arguments', kind='DeclNameArguments',
-                   is_optional=True, description='''
-                   The argument labels of the referenced function, optionally
-                   specified.
-                   '''),
-         ]),
-
-    # func-decl-name -> (identifier | operator) decl-name-arguments?
-    # NOTE: This is duplicated with `DeclName` above. Change `DeclName`
-    # description and use it if possible.
-    Node('FunctionDeclName', kind='Syntax',
-         description='A function declaration name (e.g. `foo(_:_:)`).',
-         children=[
-             Child('Name', kind='Syntax', description='''
-                   The base name of the referenced function.
-                   ''',
-                   node_choices=[
-                       Child('Identifier', kind='IdentifierToken'),
-                       Child('PrefixOperator', kind='PrefixOperatorToken'),
-                       Child('SpacedBinaryOperator',
-                             kind='SpacedBinaryOperatorToken'),
-                   ]),
-             Child('Arguments', kind='DeclNameArguments',
-                   is_optional=True, description='''
-                   The argument labels of the referenced function, optionally
-                   specified.
+             Child('Name', kind='DeclNameRef', description='''
+                   The name of the referenced function.
                    '''),
          ]),
 ]

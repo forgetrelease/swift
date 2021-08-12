@@ -582,7 +582,8 @@ bool Parser::parseSpecializeAttributeArguments(
     swift::tok ClosingBrace, bool &DiscardAttribute, Optional<bool> &Exported,
     Optional<SpecializeAttr::SpecializationKind> &Kind,
     swift::TrailingWhereClause *&TrailingWhereClause,
-    DeclNameRef &targetFunction, SmallVectorImpl<Identifier> &spiGroups,
+    DeclNameRef &targetFunction, DeclNameLoc &targetFunctionLoc,
+    SmallVectorImpl<Identifier> &spiGroups,
     llvm::function_ref<bool(Parser &)> parseSILTargetName,
     llvm::function_ref<bool(Parser &)> parseSILSIPModule) {
   SyntaxParsingContext ContentContext(SyntaxContext,
@@ -665,14 +666,12 @@ bool Parser::parseSpecializeAttributeArguments(
       }
       if (ParamLabel == "target") {
         if (!parseSILTargetName(*this)) {
-          SyntaxParsingContext ContentContext(SyntaxContext,
-                                              SyntaxKind::DeclName);
-          DeclNameLoc loc;
           targetFunction = parseDeclNameRef(
-              loc, diag::attr_specialize_expected_function,
+              targetFunctionLoc, diag::attr_specialize_expected_function,
               DeclNameFlag::AllowZeroArgCompoundNames |
                   DeclNameFlag::AllowKeywordsUsingSpecialNames |
-                  DeclNameFlag::AllowOperators);
+                  DeclNameFlag::AllowOperators,
+              ModuleSelectorReason::SiblingDeclName);
         }
       }
       if (ParamLabel == "spiModule") {
@@ -688,6 +687,7 @@ bool Parser::parseSpecializeAttributeArguments(
           consumeToken();
           return false;
         }
+        parseModuleSelector(ModuleSelectorReason::SPIGroup);
         auto text = Tok.getText();
         spiGroups.push_back(Context.getIdentifier(text));
         consumeToken();
@@ -744,10 +744,12 @@ bool Parser::parseSpecializeAttribute(
   TrailingWhereClause *trailingWhereClause = nullptr;
 
   DeclNameRef targetFunction;
+  DeclNameLoc targetFunctionLoc;
   SmallVector<Identifier, 4> spiGroups;
   if (!parseSpecializeAttributeArguments(
           ClosingBrace, DiscardAttribute, exported, kind, trailingWhereClause,
-          targetFunction, spiGroups, parseSILTargetName, parseSILSIPModule)) {
+          targetFunction, targetFunctionLoc, spiGroups, parseSILTargetName,
+          parseSILSIPModule)) {
     return false;
   }
 
@@ -776,7 +778,8 @@ bool Parser::parseSpecializeAttribute(
   // Store the attribute.
   Attr = SpecializeAttr::create(Context, AtLoc, SourceRange(Loc, rParenLoc),
                                 trailingWhereClause, exported.getValue(),
-                                kind.getValue(), targetFunction, spiGroups);
+                                kind.getValue(), targetFunction,
+                                targetFunctionLoc, spiGroups);
   return true;
 }
 
@@ -813,7 +816,8 @@ Parser::parseImplementsAttribute(SourceLoc AtLoc, SourceLoc Loc) {
       MemberName = parseDeclNameRef(MemberNameLoc,
           diag::attr_implements_expected_member_name,
           DeclNameFlag::AllowZeroArgCompoundNames |
-          DeclNameFlag::AllowOperators);
+          DeclNameFlag::AllowOperators,
+          ModuleSelectorReason::SiblingDeclName);
       if (!MemberName) {
         Status.setIsParseError();
       }
@@ -835,7 +839,7 @@ Parser::parseImplementsAttribute(SourceLoc AtLoc, SourceLoc Loc) {
     return Status;
   }
 
-  // FIXME(ModQual): Reject module qualification on MemberName.
+  assert(MemberName.getModuleSelector().empty());
   auto *TE = new (Context) TypeExpr(ProtocolType.get());
   return ParserResult<ImplementsAttr>(
     ImplementsAttr::create(Context, AtLoc, SourceRange(Loc, rParenLoc),
@@ -1398,11 +1402,10 @@ void Parser::parseObjCSelector(SmallVector<Identifier, 4> &Names,
     SyntaxParsingContext SelectorPieceContext(SyntaxContext,
                                               SyntaxKind::ObjCSelectorPiece);
     // Empty selector piece.
-    if (Tok.is(tok::colon)) {
+    if (consumeIfColonSplittingDoubles()) {
       Names.push_back(Identifier());
-      NameLocs.push_back(Tok.getLoc());
+      NameLocs.push_back(PreviousLoc);
       IsNullarySelector = false;
-      consumeToken();
       continue;
     }
 
@@ -1413,8 +1416,7 @@ void Parser::parseObjCSelector(SmallVector<Identifier, 4> &Names,
       consumeToken();
 
       // If we have a colon, consume it.
-      if (Tok.is(tok::colon)) {
-        consumeToken();
+      if (consumeIfColonSplittingDoubles()) {
         IsNullarySelector = false;
         continue;
       }
@@ -1861,6 +1863,8 @@ bool Parser::parseNewDeclAttribute(DeclAttributes &Attributes, SourceLoc AtLoc,
       return false;
     }
 
+    parseModuleSelector(ModuleSelectorReason::SPIGroup);
+
     auto text = Tok.getText();
     spiGroups.push_back(Context.getIdentifier(text));
     consumeToken();
@@ -1971,6 +1975,7 @@ bool Parser::parseNewDeclAttribute(DeclAttributes &Attributes, SourceLoc AtLoc,
       return false;
     }
 
+    parseModuleSelector(ModuleSelectorReason::ObjCName);
     if (Tok.isNot(tok::identifier)) {
       diagnose(Loc, diag::swift_native_objc_runtime_base_must_be_identifier);
       return false;
@@ -2465,6 +2470,7 @@ bool Parser::parseNewDeclAttribute(DeclAttributes &Attributes, SourceLoc AtLoc,
 
     SourceLoc LParenLoc = consumeToken(tok::l_paren);
     DeclNameRef replacedFunction;
+    DeclNameLoc replacedFunctionLoc;
     {
       SyntaxParsingContext ContentContext(
           SyntaxContext, SyntaxKind::NamedAttributeStringArgument);
@@ -2482,17 +2488,12 @@ bool Parser::parseNewDeclAttribute(DeclAttributes &Attributes, SourceLoc AtLoc,
         return false;
       }
       consumeToken(tok::colon);
-      {
-        SyntaxParsingContext ContentContext(SyntaxContext,
-                                            SyntaxKind::DeclName);
 
-        DeclNameLoc loc;
-        replacedFunction = parseDeclNameRef(loc,
-            diag::attr_dynamic_replacement_expected_function,
-            DeclNameFlag::AllowZeroArgCompoundNames |
-            DeclNameFlag::AllowKeywordsUsingSpecialNames |
-            DeclNameFlag::AllowOperators);
-      }
+      replacedFunction = parseDeclNameRef(replacedFunctionLoc,
+          diag::attr_dynamic_replacement_expected_function,
+          DeclNameFlag::AllowZeroArgCompoundNames |
+          DeclNameFlag::AllowKeywordsUsingSpecialNames |
+          DeclNameFlag::AllowOperators);
     }
 
     // Parse the matching ')'.
@@ -2506,7 +2507,8 @@ bool Parser::parseNewDeclAttribute(DeclAttributes &Attributes, SourceLoc AtLoc,
 
 
     DynamicReplacementAttr *attr = DynamicReplacementAttr::create(
-        Context, AtLoc, Loc, LParenLoc, replacedFunction, RParenLoc);
+        Context, AtLoc, Loc, LParenLoc, replacedFunction, replacedFunctionLoc,
+                                                                  RParenLoc);
     Attributes.add(attr);
     break;
   }
@@ -2599,6 +2601,8 @@ bool Parser::parseNewDeclAttribute(DeclAttributes &Attributes, SourceLoc AtLoc,
                DeclAttribute::isDeclModifier(DK));
       return false;
     }
+
+    parseModuleSelector(ModuleSelectorReason::SiblingDeclName);
 
     if (Tok.isNot(tok::identifier)) {
       diagnose(Loc, diag::projection_value_property_not_identifier);
@@ -2838,11 +2842,15 @@ ParserStatus Parser::parseDeclAttribute(
   DeclAttributes &Attributes, SourceLoc AtLoc,
   PatternBindingInitializer *&initContext,
   bool isFromClangAttribute) {
+  bool hasModuleSelector = Context.LangOpts.EnableExperimentalModuleSelector &&
+                               peekToken().is(tok::colon_colon);
+
   // If this not an identifier, the attribute is malformed.
   if (Tok.isNot(tok::identifier) &&
       Tok.isNot(tok::kw_in) &&
       Tok.isNot(tok::kw_inout) &&
-      Tok.isNot(tok::kw_rethrows)) {
+      Tok.isNot(tok::kw_rethrows) &&
+      !hasModuleSelector) {
 
     if (Tok.is(tok::code_complete)) {
       if (CodeCompletion) {
@@ -2862,7 +2870,10 @@ ParserStatus Parser::parseDeclAttribute(
 
   // If the attribute follows the new representation, switch
   // over to the alternate parsing path.
-  DeclAttrKind DK = DeclAttribute::getAttrKindFromString(Tok.getText());
+  // All module-selected names are custom attributes, so we always use DAK_Count
+  // if a module selector is present.
+  DeclAttrKind DK = hasModuleSelector ? DAK_Count :
+      DeclAttribute::getAttrKindFromString(Tok.getText());
   if (DK == DAK_Rethrows) { DK = DAK_AtRethrows; }
   if (DK == DAK_Reasync) { DK = DAK_AtReasync; }
 
@@ -2870,7 +2881,7 @@ ParserStatus Parser::parseDeclAttribute(
                                   StringRef correctName,
                                   DeclAttrKind kind,
                                   Optional<Diag<StringRef, StringRef>> diag = None) {
-    if (DK == DAK_Count && Tok.getText() == invalidName) {
+    if (DK == DAK_Count && !hasModuleSelector && Tok.getText() == invalidName) {
       DK = kind;
 
       if (diag) {
@@ -2924,7 +2935,8 @@ ParserStatus Parser::parseDeclAttribute(
     AtLoc = SourceLoc();
   }
 
-  if (DK == DAK_Count && Tok.getText() == "warn_unused_result") {
+  if (DK == DAK_Count && !hasModuleSelector
+      && Tok.getText() == "warn_unused_result") {
     // The behavior created by @warn_unused_result is now the default. Emit a
     // Fix-It to remove.
     SourceLoc attrLoc = consumeToken();
@@ -2965,9 +2977,10 @@ ParserStatus Parser::parseDeclAttribute(
     return makeParserSuccess();
   }
 
-  if (TypeAttributes::getAttrKindFromString(Tok.getText()) != TAK_Count)
+  if (!hasModuleSelector &&
+      TypeAttributes::getAttrKindFromString(Tok.getText()) != TAK_Count)
     diagnose(Tok, diag::type_attribute_applied_to_decl);
-  else if (Tok.isContextualKeyword("unknown")) {
+  else if (!hasModuleSelector && Tok.isContextualKeyword("unknown")) {
     diagnose(Tok, diag::unknown_attribute, "unknown");
   } else {
     // Change the context to create a custom attribute syntax.
@@ -4683,7 +4696,9 @@ ParserResult<ImportDecl> Parser::parseDeclImport(ParseDeclOptions Flags,
                            /*diagnoseDollarPrefix=*/false,
                            diag::expected_identifier_in_decl, "import"))
       return nullptr;
-    HasNext = consumeIf(tok::period);
+    HasNext = consumeIf(tok::period) ||
+        (Context.LangOpts.EnableExperimentalModuleSelector &&
+         consumeIf(tok::colon_colon));
   } while (HasNext);
 
   // Collect all access path components to an import path.
@@ -4807,6 +4822,8 @@ static ParserStatus
 parseIdentifierDeclName(Parser &P, Identifier &Result, SourceLoc &Loc,
                         StringRef DeclKindName,
                         llvm::function_ref<bool(const Token &)> canRecover) {
+  P.parseModuleSelector(Parser::ModuleSelectorReason::NameInDecl, DeclKindName);
+
   if (P.Tok.is(tok::identifier)) {
     Loc = P.consumeIdentifier(Result, /*diagnoseDollarPrefix=*/true);
 
@@ -5721,6 +5738,9 @@ static ParameterList *parseOptionalAccessorArgument(SourceLoc SpecifierLoc,
   if (SpecifierLoc.isValid() && P.Tok.is(tok::l_paren)) {
     SyntaxParsingContext ParamCtx(P.SyntaxContext, SyntaxKind::AccessorParameter);
     StartLoc = P.consumeToken(tok::l_paren);
+
+    P.parseModuleSelector(Parser::ModuleSelectorReason::ParamDecl);
+
     if (P.Tok.isNot(tok::identifier)) {
       P.diagnose(P.Tok, diag::expected_accessor_parameter_name,
                  Kind == AccessorKind::Set ? 0 :
@@ -8104,6 +8124,45 @@ Parser::parseDeclOperator(ParseDeclOptions Flags, DeclAttributes &Attributes) {
   return DCC.fixupParserResult(Result);
 }
 
+template <typename Fn>
+static ParserStatus
+parsePrecedenceGroupNameList(Parser &P, Fn takeGroupName) {
+  SourceLoc prevCommaLoc;
+  do {
+    SyntaxParsingContext NameCtxt(P.SyntaxContext,
+                                  SyntaxKind::PrecedenceGroupNameElement);
+    if (P.Tok.is(tok::code_complete)) {
+      if (P.CodeCompletion)
+        // FIXME: weird that we use PrecedenceGroupRelation, not NameElement.
+        P.CodeCompletion->
+            completeInPrecedenceGroup(SyntaxKind::PrecedenceGroupRelation);
+      P.consumeToken();
+      return makeParserCodeCompletionStatus();
+    }
+
+    // TODO: We could support module selectors for precedence groups if we
+    //       implemented the lookup for it.
+    DeclNameLoc nameLoc;
+    auto name = P.parseDeclNameRef(nameLoc,
+        diag::expected_group_name_in_precedencegroup_list, {},
+        Parser::ModuleSelectorReason::PrecedenceGroup);
+    if (!name)
+      return makeParserError();
+
+    takeGroupName(prevCommaLoc, name, nameLoc);
+
+    if (P.Tok.is(tok::code_complete)
+        && P.getEndOfPreviousLoc() == P.Tok.getLoc()) {
+      P.consumeToken();
+      return makeParserCodeCompletionStatus();
+    }
+    if (!P.consumeIf(tok::comma, prevCommaLoc))
+      break;
+  } while (true);
+  P.SyntaxContext->collectNodesInPlace(SyntaxKind::PrecedenceGroupNameList);
+  return makeParserSuccess();
+}
+
 ParserResult<OperatorDecl>
 Parser::parseDeclOperatorImpl(SourceLoc OperatorLoc, Identifier Name,
                               SourceLoc NameLoc, DeclAttributes &Attributes) {
@@ -8131,48 +8190,51 @@ Parser::parseDeclOperatorImpl(SourceLoc OperatorLoc, Identifier Name,
       return makeParserCodeCompletionResult<OperatorDecl>();
     }
 
-    SyntaxParsingContext ListCtxt(SyntaxContext, SyntaxKind::IdentifierList);
+    // Although we parse this as a list, we actually only want there to be zero
+    // (prefix/postfix) or one (infix) elements. These SourceLocs point to the
+    // ends of the elements that should not be there (including the introducer
+    // token for the first one) so that we can diagnose them all at once. If
+    // `typesEndLoc` never becomes valid, we didn't find any excess elements.
+    SourceLoc excessStartLoc = isInfix ? SourceLoc() : colonLoc;
+    SourceLoc excessEndLoc;
 
-    (void)parseIdentifier(groupName, groupLoc,
-                          diag::operator_decl_expected_precedencegroup,
-                          /*diagnoseDollarPrefix=*/false);
-
-    if (Context.TypeCheckerOpts.EnableOperatorDesignatedTypes) {
-      // Designated types have been removed; consume the list (mainly for source
-      // compatibility with old swiftinterfaces) and emit a warning.
-
-      // These SourceLocs point to the ends of the designated type list. If
-      // `typesEndLoc` never becomes valid, we didn't find any designated types.
-      SourceLoc typesStartLoc = Tok.getLoc();
-      SourceLoc typesEndLoc;
-
-      if (isPrefix || isPostfix) {
-        // These have no precedence group, so we already parsed the first entry
-        // in the designated types list. Retroactively include it in the range.
-        typesStartLoc = colonLoc;
-        typesEndLoc = groupLoc;
+    ParserStatus listStatus = parsePrecedenceGroupNameList(*this,
+        [&](SourceLoc prevCommaLoc, DeclNameRef name, DeclNameLoc nameLoc) {
+      if (!isPrefix && !isPostfix && groupName.empty()) {
+        // For infix operator declarations, the first element is assumed to be
+        // a real precedence group.
+        groupName = name.getBaseIdentifier();
+        groupLoc = nameLoc.getBaseNameLoc();
+      } else {
+        // This is an excess element. Update excessStartLoc and excessEndLoc to
+        // include it in the range to diagnose.
+        if (excessStartLoc.isInvalid())
+          excessStartLoc = prevCommaLoc;
+        excessEndLoc = nameLoc.getEndLoc();
       }
+    });
 
-      while (consumeIf(tok::comma, typesEndLoc)) {
-        if (Tok.isNot(tok::eof))
-          typesEndLoc = consumeToken();
-      }
+    if (listStatus.isErrorOrHasCompletion())
+      return makeParserResult<OperatorDecl>(listStatus, nullptr);
 
-      if (typesEndLoc.isValid())
-        diagnose(typesStartLoc, diag::operator_decl_remove_designated_types)
-            .fixItRemove({typesStartLoc, typesEndLoc});
-    } else {
-      if (isPrefix || isPostfix) {
-        diagnose(colonLoc, diag::precedencegroup_not_infix)
-            .fixItRemove({colonLoc, groupLoc});
-      }
-      // Nothing to complete here, simply consume the token.
-      if (Tok.is(tok::code_complete))
-        consumeToken();
+    // Nothing to complete here, simply consume the token.
+    if (Tok.is(tok::code_complete))
+      consumeToken();
+
+    if (excessEndLoc.isValid()) {
+      auto diagID = !isPrefix && !isPostfix ? diag::precedencegroup_too_many
+                                            : diag::precedencegroup_not_infix;
+
+      if (Context.TypeCheckerOpts.EnableOperatorDesignatedTypes)
+        diagID = diag::operator_decl_remove_designated_types;
+
+      diagnose(excessStartLoc, diagID)
+          .fixItRemove({excessStartLoc, excessEndLoc});
     }
   }
 
   // Diagnose deprecated operator body syntax `operator + { ... }`.
+  SourceLoc lastGoodLoc = PreviousLoc;
   SourceLoc lBraceLoc;
   if (consumeIf(tok::l_brace, lBraceLoc)) {
     if (isInfix && !Tok.is(tok::r_brace)) {
@@ -8180,7 +8242,6 @@ Parser::parseDeclOperatorImpl(SourceLoc OperatorLoc, Identifier Name,
     } else {
       auto Diag = diagnose(lBraceLoc, diag::deprecated_operator_body);
       if (Tok.is(tok::r_brace)) {
-        SourceLoc lastGoodLoc = groupLoc.isValid() ? groupLoc : NameLoc;
         SourceLoc lastGoodLocEnd = Lexer::getLocForEndOfToken(SourceMgr,
                                                               lastGoodLoc);
         SourceLoc rBraceEnd = Lexer::getLocForEndOfToken(SourceMgr, Tok.getLoc());
@@ -8222,6 +8283,8 @@ Parser::parseDeclPrecedenceGroup(ParseDeclOptions flags,
     diagnose(precedenceGroupLoc, diag::decl_inner_scope);
     return nullptr;
   }
+
+  parseModuleSelector(ModuleSelectorReason::PrecedenceGroup);
 
   Identifier name;
   SourceLoc nameLoc;
@@ -8420,28 +8483,14 @@ Parser::parseDeclPrecedenceGroup(ParseDeclOptions flags,
                                        : higherThanKeywordLoc);
       auto &relations = (isLowerThan ? lowerThan : higherThan);
 
-      do {
-        SyntaxParsingContext NameCtxt(SyntaxContext,
-                                      SyntaxKind::PrecedenceGroupNameElement);
-        if (checkCodeCompletion(SyntaxKind::PrecedenceGroupRelation)) {
-          return abortBody(/*hasCodeCompletion*/true);
-        }
-
-        if (Tok.isNot(tok::identifier)) {
-          diagnose(Tok, diag::expected_precedencegroup_relation, attrName);
-          return abortBody();
-        }
-        Identifier name;
-        SourceLoc nameLoc = consumeIdentifier(name,
-                                              /*diagnoseDollarPrefix=*/false);
-        relations.push_back({nameLoc, name, nullptr});
-
-        if (skipUnspacedCodeCompleteToken())
-          return abortBody(/*hasCodeCompletion*/true);
-        if (!consumeIf(tok::comma))
-          break;
-      } while (true);
-      SyntaxContext->collectNodesInPlace(SyntaxKind::PrecedenceGroupNameList);
+      ParserStatus listStatus = parsePrecedenceGroupNameList(*this,
+          [&](SourceLoc prevCommaLoc, DeclNameRef name, DeclNameLoc nameLoc) {
+        relations.push_back({nameLoc.getBaseNameLoc(), name.getBaseIdentifier(),
+                             nullptr});
+      });
+      if (listStatus.isErrorOrHasCompletion()) {
+        return abortBody(listStatus.hasCodeCompletion());
+      }
       continue;
     }
 

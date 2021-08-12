@@ -270,12 +270,26 @@ SyntaxFactory::makeGenericParameter(TokenSyntax Name,
   return makeGenericParameter(None, Name, None, None, TrailingComma);
 }
 
+DeclNameRefSyntax SyntaxFactory::makeDeclNameRef(Optional<StringRef> ModuleName,
+                                                 StringRef BaseName,
+                                                 StringRef LeadingTrivia,
+                                                 StringRef TrailingTrivia) {
+  Optional<ModuleSelectorSyntax> selector;
+  if (ModuleName) {
+    auto moduleIdent = makeIdentifier(*ModuleName, LeadingTrivia, "");
+    auto colonColon = makeColonColonToken("", "");
+    selector.emplace(makeModuleSelector(moduleIdent, colonColon));
+    LeadingTrivia = "";
+  }
+  auto baseNameIdent = makeIdentifier(BaseName, LeadingTrivia, TrailingTrivia);
+  return makeDeclNameRef(selector, baseNameIdent, None);
+}
+
 TypeSyntax SyntaxFactory::makeTypeIdentifier(StringRef TypeName,
                                              StringRef LeadingTrivia,
                                              StringRef TrailingTrivia) {
-  auto identifier =
-      makeIdentifier(TypeName, LeadingTrivia, TrailingTrivia);
-  return makeSimpleTypeIdentifier(identifier, None);
+  auto nameRef = makeDeclNameRef(None, TypeName, LeadingTrivia, TrailingTrivia);
+  return makeSimpleTypeIdentifier(nameRef, None);
 }
 
 TypeSyntax SyntaxFactory::makeAnyTypeIdentifier(StringRef LeadingTrivia,

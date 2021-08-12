@@ -6092,6 +6092,9 @@ ConstraintSystem::simplifyConstructionConstraint(
   // variable T. T2 is the result type provided via the construction
   // constraint itself.
   addValueMemberConstraint(MetatypeType::get(valueType, getASTContext()),
+                           // OK: simplifyConstructionConstraint() is only used
+                           // for `T(...)` init calls, not `T.init(...)` calls,
+                           // so there's no module selector on `init`.
                            DeclNameRef::createConstructor(),
                            memberType,
                            useDC, functionRefKind,
@@ -7195,8 +7198,7 @@ performMemberLookup(ConstraintKind constraintKind, DeclNameRef memberName,
     // anything else, because the cost of the general search is so
     // high.
     if (auto info = getArgumentInfo(memberLocator)) {
-      memberName.getFullName() = DeclName(ctx, memberName.getBaseName(),
-                                          info->Labels);
+      memberName = memberName.withArgumentLabels(ctx, info->Labels);
     }
   }
 
@@ -7720,34 +7722,53 @@ performMemberLookup(ConstraintKind constraintKind, DeclNameRef memberName,
   }
 
   // If we have no viable or unviable candidates, and we're generating,
-  // diagnostics, rerun the query with inaccessible members included, so we can
-  // include them in the unviable candidates list.
+  // diagnostics, rerun the query with various excluded members included, so we
+  // can include them in the unviable candidates list.
   if (result.ViableCandidates.empty() && result.UnviableCandidates.empty() &&
       includeInaccessibleMembers) {
+    auto addExcludedChoices = [&](LookupResult &lookup,
+                                  MemberLookupResult::UnviableReason reason) {
+      for (auto entry : lookup) {
+        auto *cand = entry.getValueDecl();
+
+        // If the result is invalid, skip it.
+        if (cand->isInvalid()) {
+          result.markErrorAlreadyDiagnosed();
+          return false;
+        }
+
+        if (excludedDynamicMembers.count(cand))
+          continue;
+
+        result.addUnviable(getOverloadChoice(cand, /*isBridged=*/false,
+                                             /*isUnwrappedOptional=*/false),
+                           reason);
+      }
+      return true;
+    };
+
+    // Look for members that were excluded because of a module selector.
+    if (memberName.hasModuleSelector()) {
+      DeclNameRef unqualifiedMemberName{memberName.getFullName()};
+
+      NameLookupOptions lookupOptions = defaultMemberLookupOptions;
+      auto lookup =
+          TypeChecker::lookupMember(DC, instanceTy, unqualifiedMemberName,
+                                    lookupOptions);
+      if (!addExcludedChoices(lookup, MemberLookupResult::UR_WrongModule))
+        return result;
+    }
+
+    // Look for members that were excluded by access control.
     NameLookupOptions lookupOptions = defaultMemberLookupOptions;
-    
+
     // Ignore access control so we get candidates that might have been missed
     // before.
     lookupOptions |= NameLookupFlags::IgnoreAccessControl;
 
     auto lookup =
         TypeChecker::lookupMember(DC, instanceTy, memberName, lookupOptions);
-    for (auto entry : lookup) {
-      auto *cand = entry.getValueDecl();
-
-      // If the result is invalid, skip it.
-      if (cand->isInvalid()) {
-        result.markErrorAlreadyDiagnosed();
-        return result;
-      }
-
-      if (excludedDynamicMembers.count(cand))
-        continue;
-
-      result.addUnviable(getOverloadChoice(cand, /*isBridged=*/false,
-                                           /*isUnwrappedOptional=*/false),
-                         MemberLookupResult::UR_Inaccessible);
-    }
+    addExcludedChoices(lookup, MemberLookupResult::UR_Inaccessible);
   }
   
   return result;
@@ -7948,6 +7969,11 @@ fixMemberRef(ConstraintSystem &cs, Type baseTy,
                        cs, baseTy, choice.getDecl(), memberName, locator)
                  : nullptr;
     }
+
+    case MemberLookupResult::UR_WrongModule:
+      assert(choice.isDecl());
+      return AllowMemberFromWrongModule::create(cs, baseTy, choice.getDecl(),
+                                                memberName, locator);
 
     case MemberLookupResult::UR_Inaccessible:
       assert(choice.isDecl());
@@ -11169,7 +11195,9 @@ ConstraintSystem::simplifyRestrictedConstraintImpl(
     auto *memberTy = createTypeVariable(memberLoc, TVO_CanBindToNoEscape);
 
     addValueMemberConstraint(MetatypeType::get(type2, getASTContext()),
-                             DeclNameRef(DeclBaseName::createConstructor()),
+                             // OK: Implicit conversion, no module selector to
+                             // drop here.
+                             DeclNameRef::createConstructor(),
                              memberTy, DC, FunctionRefKind::DoubleApply,
                              /*outerAlternatives=*/{}, memberLoc);
 
@@ -11636,6 +11664,7 @@ ConstraintSystem::SolutionKind ConstraintSystem::simplifyFixConstraint(
   case FixKind::AllowInvalidInitRef:
   case FixKind::AllowClosureParameterDestructuring:
   case FixKind::AllowInaccessibleMember:
+  case FixKind::AllowMemberFromWrongModule:
   case FixKind::AllowAnyObjectKeyPathRoot:
   case FixKind::AllowMultiArgFuncKeyPathMismatch:
   case FixKind::TreatKeyPathSubscriptIndexAsHashable:

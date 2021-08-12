@@ -438,6 +438,14 @@ public:
 /// \returns true if any declarations were removed, false otherwise.
 bool removeOverriddenDecls(SmallVectorImpl<ValueDecl*> &decls);
 
+/// Remove any declarations in the given set that do not match the
+/// module selector, if it is not empty.
+///
+/// \returns true if any declarations were removed, false otherwise.
+bool removeOutOfModuleDecls(SmallVectorImpl<ValueDecl*> &decls,
+                            Identifier moduleSelector,
+                            const DeclContext *dc);
+
 /// Remove any declarations in the given set that are shadowed by
 /// other declarations in that set.
 ///
@@ -494,6 +502,7 @@ namespace namelookup {
 /// Once name lookup has gathered a set of results, perform any necessary
 /// steps to prune the result set before returning it to the caller.
 void pruneLookupResultSet(const DeclContext *dc, NLOptions options,
+                          Identifier moduleSelector,
                           SmallVectorImpl<ValueDecl *> &decls);
 
 /// Do nothing if debugClient is null.
@@ -719,12 +728,12 @@ public:
   ///
   /// \param stopAfterInnermostBraceStmt If lookup should consider
   /// local declarations inside the innermost syntactic scope only.
-  static void lookupLocalDecls(SourceFile *, DeclName, SourceLoc,
+  static void lookupLocalDecls(SourceFile *, DeclNameRef, SourceLoc,
                                bool stopAfterInnermostBraceStmt,
                                SmallVectorImpl<ValueDecl *> &);
 
   /// Returns the result if there is exactly one, nullptr otherwise.
-  static ValueDecl *lookupSingleLocalDecl(SourceFile *, DeclName, SourceLoc);
+  static ValueDecl *lookupSingleLocalDecl(SourceFile *, DeclNameRef, SourceLoc);
 
   /// Entry point to record the visible statement labels from the given
   /// point.

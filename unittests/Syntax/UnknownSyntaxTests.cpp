@@ -13,8 +13,8 @@ using namespace swift::syntax;
 SymbolicReferenceExprSyntax getCannedSymbolicRef(const RC<SyntaxArena> &Arena) {
   SyntaxFactory Factory(Arena);
   // First, make a symbolic reference to an 'Array<Int>'
-  auto Array = Factory.makeIdentifier("Array", {}, {});
-  auto Int = Factory.makeIdentifier("Int", {}, {});
+  auto Array = Factory.makeDeclNameRef(None, "Array", {}, {});
+  auto Int = Factory.makeDeclNameRef(None, "Int", {}, {});
   auto IntType = Factory.makeSimpleTypeIdentifier(Int, None);
   auto IntArg = Factory.makeGenericArgument(IntType, None);
   GenericArgumentClauseSyntaxBuilder ArgBuilder(Arena);

@@ -64,8 +64,8 @@ TEST(ExprSyntaxTests, SymbolicReferenceExprGetAPIs) {
   RC<SyntaxArena> Arena = SyntaxArena::make();
   SyntaxFactory Factory(Arena);
   {
-    auto Array = Factory.makeIdentifier("Array", "", "");
-    auto Int = Factory.makeIdentifier("Int", "", "");
+    auto Array = Factory.makeDeclNameRef(None, "Array", "", "");
+    auto Int = Factory.makeDeclNameRef(None, "Int", "", "");
     auto IntType = Factory.makeSimpleTypeIdentifier(Int, None);
     auto GenericArg = Factory.makeGenericArgument(IntType, None);
     GenericArgumentClauseSyntaxBuilder ArgBuilder(Arena);
@@ -95,8 +95,8 @@ TEST(ExprSyntaxTests, SymbolicReferenceExprGetAPIs) {
 TEST(ExprSyntaxTests, SymbolicReferenceExprMakeAPIs) {
   RC<SyntaxArena> Arena = SyntaxArena::make();
   SyntaxFactory Factory(Arena);
-  auto Array = Factory.makeIdentifier("Array", "", "");
-  auto Int = Factory.makeIdentifier("Int", "", "");
+  auto Array = Factory.makeDeclNameRef(None, "Array", "", "");
+  auto Int = Factory.makeDeclNameRef(None, "Int", "", "");
   auto IntType = Factory.makeSimpleTypeIdentifier(Int, None);
   auto GenericArg = Factory.makeGenericArgument(IntType, None);
   GenericArgumentClauseSyntaxBuilder ArgBuilder(Arena);
@@ -113,7 +113,7 @@ TEST(ExprSyntaxTests, SymbolicReferenceExprMakeAPIs) {
   }
 
   {
-    auto Foo = Factory.makeIdentifier("foo", "", "");
+    auto Foo = Factory.makeDeclNameRef(None, "foo", "", "");
     llvm::SmallString<48> Scratch;
     llvm::raw_svector_ostream OS(Scratch);
     auto BlankArgs = Factory.makeBlankGenericArgumentClause();
@@ -133,8 +133,8 @@ TEST(ExprSyntaxTests, SymbolicReferenceExprMakeAPIs) {
 TEST(ExprSyntaxTests, SymbolicReferenceExprWithAPIs) {
   RC<SyntaxArena> Arena = SyntaxArena::make();
   SyntaxFactory Factory(Arena);
-  auto Array = Factory.makeIdentifier("Array", "", "");
-  auto Int = Factory.makeIdentifier("Int", "", "");
+  auto Array = Factory.makeDeclNameRef(None, "Array", "", "");
+  auto Int = Factory.makeDeclNameRef(None, "Int", "", "");
   auto IntType = Factory.makeSimpleTypeIdentifier(Int, None);
   auto GenericArg = Factory.makeGenericArgument(IntType, None);
   GenericArgumentClauseSyntaxBuilder ArgBuilder(Arena);
@@ -174,7 +174,7 @@ TEST(ExprSyntaxTests, TupleExprElementGetAPIs) {
   RC<SyntaxArena> Arena = SyntaxArena::make();
   SyntaxFactory Factory(Arena);
   auto X = Factory.makeIdentifier("x", "", "");
-  auto Foo = Factory.makeIdentifier("foo", "", "");
+  auto Foo = Factory.makeDeclNameRef(None, "foo", "", "");
   auto Colon = Factory.makeColonToken("", " ");
   auto SymbolicRef = Factory.makeSymbolicReferenceExpr(Foo, llvm::None);
   auto Comma = Factory.makeCommaToken("", " ");
@@ -201,7 +201,7 @@ TEST(ExprSyntaxTests, TupleExprElementMakeAPIs) {
   RC<SyntaxArena> Arena = SyntaxArena::make();
   SyntaxFactory Factory(Arena);
   auto X = Factory.makeIdentifier("x", "", "");
-  auto Foo = Factory.makeIdentifier("foo", "", "");
+  auto Foo = Factory.makeDeclNameRef(None, "foo", "", "");
   auto Colon = Factory.makeColonToken("", " ");
   auto SymbolicRef = Factory.makeSymbolicReferenceExpr(Foo, llvm::None);
   auto Comma = Factory.makeCommaToken("", " ");
@@ -232,7 +232,7 @@ TEST(ExprSyntaxTests, TupleExprElementWithAPIs) {
   RC<SyntaxArena> Arena = SyntaxArena::make();
   SyntaxFactory Factory(Arena);
   auto X = Factory.makeIdentifier("x", "", "");
-  auto Foo = Factory.makeIdentifier("foo", "", "");
+  auto Foo = Factory.makeDeclNameRef(None, "foo", "", "");
   auto Colon = Factory.makeColonToken("", " ");
   auto SymbolicRef = Factory.makeSymbolicReferenceExpr(Foo, llvm::None);
   auto Comma = Factory.makeCommaToken("", " ");
@@ -258,7 +258,7 @@ TupleExprElementListSyntax getFullArgumentList(const RC<SyntaxArena> &Arena) {
   auto X = Factory.makeIdentifier("x", "", "");
   auto Y = Factory.makeIdentifier("y", "", "");
   auto Z = Factory.makeIdentifier("z", "", "");
-  auto Foo = Factory.makeIdentifier("foo", "", "");
+  auto Foo = Factory.makeDeclNameRef(None, "foo", "", "");
   auto Colon = Factory.makeColonToken("", " ");
   auto SymbolicRef = Factory.makeSymbolicReferenceExpr(Foo, llvm::None);
   auto Comma = Factory.makeCommaToken("", " ");
@@ -307,7 +307,7 @@ TEST(ExprSyntaxTests, TupleExprElementListGetAPIs) {
   auto X = Factory.makeIdentifier("x", "", "");
   auto Y = Factory.makeIdentifier("y", "", "");
   auto Z = Factory.makeIdentifier("z", "", "");
-  auto Foo = Factory.makeIdentifier("foo", "", "");
+  auto Foo = Factory.makeDeclNameRef(None, "foo", "", "");
   auto Colon = Factory.makeColonToken("", " ");
   auto SymbolicRef = Factory.makeSymbolicReferenceExpr(Foo, llvm::None);
   auto Comma = Factory.makeCommaToken("", " ");
@@ -367,7 +367,7 @@ TEST(ExprSyntaxTests, TupleExprElementListMakeAPIs) {
     auto X = Factory.makeIdentifier("x", "", "");
     auto Y = Factory.makeIdentifier("y", "", "");
     auto Z = Factory.makeIdentifier("z", "", "");
-    auto Foo = Factory.makeIdentifier("foo", "", "");
+    auto Foo = Factory.makeDeclNameRef(None, "foo", "", "");
     auto Colon = Factory.makeColonToken("", " ");
     auto SymbolicRef = Factory.makeSymbolicReferenceExpr(Foo, llvm::None);
     auto Comma = Factory.makeCommaToken("", " ");
@@ -405,7 +405,7 @@ TEST(ExprSyntaxTests, TupleExprElementListWithAPIs) {
 TEST(ExprSyntaxTests, FunctionCallExprGetAPIs) {
   RC<SyntaxArena> Arena = SyntaxArena::make();
   SyntaxFactory Factory(Arena);
-  auto Foo = Factory.makeIdentifier("foo", "", "");
+  auto Foo = Factory.makeDeclNameRef(None, "foo", "", "");
   auto SymbolicRef = Factory.makeSymbolicReferenceExpr(Foo, llvm::None);
   auto LeftParen = Factory.makeLeftParenToken("", "");
   auto ArgList = getFullArgumentList(Arena);
@@ -441,7 +441,7 @@ TEST(ExprSyntaxTests, FunctionCallExprGetAPIs) {
 TEST(ExprSyntaxTests, FunctionCallExprMakeAPIs) {
   RC<SyntaxArena> Arena = SyntaxArena::make();
   SyntaxFactory Factory(Arena);
-  auto Foo = Factory.makeIdentifier("foo", "", "");
+  auto Foo = Factory.makeDeclNameRef(None, "foo", "", "");
   auto SymbolicRef = Factory.makeSymbolicReferenceExpr(Foo, llvm::None);
   auto LeftParen = Factory.makeLeftParenToken("", "");
   auto ArgList = getFullArgumentList(Arena);
@@ -467,7 +467,7 @@ TEST(ExprSyntaxTests, FunctionCallExprMakeAPIs) {
 TEST(ExprSyntaxTests, FunctionCallExprWithAPIs) {
   RC<SyntaxArena> Arena = SyntaxArena::make();
   SyntaxFactory Factory(Arena);
-  auto Foo = Factory.makeIdentifier("foo", "", "");
+  auto Foo = Factory.makeDeclNameRef(None, "foo", "", "");
   auto SymbolicRef = Factory.makeSymbolicReferenceExpr(Foo, llvm::None);
   auto LeftParen = Factory.makeLeftParenToken("", "");
   auto ArgList = getFullArgumentList(Arena);
@@ -529,7 +529,7 @@ TEST(ExprSyntaxTests, FunctionCallExprBuilderAPIs) {
   auto NoColon = TokenSyntax::missingToken(tok::colon, ":", Arena);
   auto Comma = Factory.makeCommaToken("", " ");
   auto NoComma = TokenSyntax::missingToken(tok::comma, ",", Arena);
-  auto Foo = Factory.makeIdentifier("foo", "", "");
+  auto Foo = Factory.makeDeclNameRef(None, "foo", "", "");
   auto SymbolicRef = Factory.makeSymbolicReferenceExpr(Foo, llvm::None);
 
   {

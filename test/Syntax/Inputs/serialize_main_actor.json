@@ -16,7 +16,7 @@
                   "tokenKind": {
                     "kind": "kw_struct"
                   },
-                  "leadingTrivia": "\/\/ RUN: %swift-syntax-test -input-source-filename %s -serialize-raw-tree > %t\n\/\/ RUN: diff %t %S\/Inputs\/serialize_main_actor.json -u\n\n",
+                  "leadingTrivia": "\/\/ RUN: %swift-syntax-test -input-source-filename %s -serialize-raw-tree > %t\n\/\/ RUN: diff -u %S\/Inputs\/serialize_main_actor.json %t\n\n",
                   "trailingTrivia": " ",
                   "presence": "Present"
                 },
@@ -129,12 +129,20 @@
                                                           "kind": "SimpleTypeIdentifier",
                                                           "layout": [
                                                             {
-                                                              "tokenKind": {
-                                                                "kind": "identifier",
-                                                                "text": "MainActor"
-                                                              },
-                                                              "leadingTrivia": "",
-                                                              "trailingTrivia": " ",
+                                                              "kind": "DeclNameRef",
+                                                              "layout": [
+                                                                null,
+                                                                {
+                                                                  "tokenKind": {
+                                                                    "kind": "identifier",
+                                                                    "text": "MainActor"
+                                                                  },
+                                                                  "leadingTrivia": "",
+                                                                  "trailingTrivia": " ",
+                                                                  "presence": "Present"
+                                                                },
+                                                                null
+                                                              ],
                                                               "presence": "Present"
                                                             },
                                                             null
@@ -188,12 +196,20 @@
                                                       "kind": "SimpleTypeIdentifier",
                                                       "layout": [
                                                         {
-                                                          "tokenKind": {
-                                                            "kind": "identifier",
-                                                            "text": "Void"
-                                                          },
-                                                          "leadingTrivia": "",
-                                                          "trailingTrivia": "",
+                                                          "kind": "DeclNameRef",
+                                                          "layout": [
+                                                            null,
+                                                            {
+                                                              "tokenKind": {
+                                                                "kind": "identifier",
+                                                                "text": "Void"
+                                                              },
+                                                              "leadingTrivia": "",
+                                                              "trailingTrivia": "",
+                                                              "presence": "Present"
+                                                            },
+                                                            null
+                                                          ],
                                                           "presence": "Present"
                                                         },
                                                         null
@@ -378,12 +394,20 @@
                                               "kind": "SimpleTypeIdentifier",
                                               "layout": [
                                                 {
-                                                  "tokenKind": {
-                                                    "kind": "identifier",
-                                                    "text": "Foo"
-                                                  },
-                                                  "leadingTrivia": "",
-                                                  "trailingTrivia": " ",
+                                                  "kind": "DeclNameRef",
+                                                  "layout": [
+                                                    null,
+                                                    {
+                                                      "tokenKind": {
+                                                        "kind": "identifier",
+                                                        "text": "Foo"
+                                                      },
+                                                      "leadingTrivia": "",
+                                                      "trailingTrivia": " ",
+                                                      "presence": "Present"
+                                                    },
+                                                    null
+                                                  ],
                                                   "presence": "Present"
                                                 },
                                                 null
@@ -418,15 +442,22 @@
                                                           "kind": "IdentifierExpr",
                                                           "layout": [
                                                             {
-                                                              "tokenKind": {
-                                                                "kind": "identifier",
-                                                                "text": "Foo"
-                                                              },
-                                                              "leadingTrivia": "\n        ",
-                                                              "trailingTrivia": " ",
+                                                              "kind": "DeclNameRef",
+                                                              "layout": [
+                                                                null,
+                                                                {
+                                                                  "tokenKind": {
+                                                                    "kind": "identifier",
+                                                                    "text": "Foo"
+                                                                  },
+                                                                  "leadingTrivia": "\n        ",
+                                                                  "trailingTrivia": " ",
+                                                                  "presence": "Present"
+                                                                },
+                                                                null
+                                                              ],
                                                               "presence": "Present"
-                                                            },
-                                                            null
+                                                            }
                                                           ],
                                                           "presence": "Present"
                                                         },
@@ -469,12 +500,20 @@
                                                                           "kind": "SimpleTypeIdentifier",
                                                                           "layout": [
                                                                             {
-                                                                              "tokenKind": {
-                                                                                "kind": "identifier",
-                                                                                "text": "MainActor"
-                                                                              },
-                                                                              "leadingTrivia": "",
-                                                                              "trailingTrivia": " ",
+                                                                              "kind": "DeclNameRef",
+                                                                              "layout": [
+                                                                                null,
+                                                                                {
+                                                                                  "tokenKind": {
+                                                                                    "kind": "identifier",
+                                                                                    "text": "MainActor"
+                                                                                  },
+                                                                                  "leadingTrivia": "",
+                                                                                  "trailingTrivia": " ",
+                                                                                  "presence": "Present"
+                                                                                },
+                                                                                null
+                                                                              ],
                                                                               "presence": "Present"
                                                                             },
                                                                             null
@@ -519,15 +558,22 @@
                                                                           "kind": "IdentifierExpr",
                                                                           "layout": [
                                                                             {
-                                                                              "tokenKind": {
-                                                                                "kind": "identifier",
-                                                                                "text": "print"
-                                                                              },
-                                                                              "leadingTrivia": "\n            ",
-                                                                              "trailingTrivia": "",
+                                                                              "kind": "DeclNameRef",
+                                                                              "layout": [
+                                                                                null,
+                                                                                {
+                                                                                  "tokenKind": {
+                                                                                    "kind": "identifier",
+                                                                                    "text": "print"
+                                                                                  },
+                                                                                  "leadingTrivia": "\n            ",
+                                                                                  "trailingTrivia": "",
+                                                                                  "presence": "Present"
+                                                                                },
+                                                                                null
+                                                                              ],
                                                                               "presence": "Present"
-                                                                            },
-                                                                            null
+                                                                            }
                                                                           ],
                                                                           "presence": "Present"
                                                                         },
@@ -698,7 +744,7 @@
         "kind": "eof",
         "text": ""
       },
-      "leadingTrivia": "",
+      "leadingTrivia": "\n",
       "trailingTrivia": "",
       "presence": "Present"
     }
