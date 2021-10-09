@@ -192,6 +192,9 @@ enum class ConstraintKind : char {
   /// inferred from a conversion, so the check is more relax comparing to
   /// `ConformsTo`.
   TransitivelyConformsTo,
+  /// The first type is the type of an operator that must be resolved via
+  /// unqualified global lookup.
+  GlobalOperator,
 };
 
 /// Classification of the different kinds of constraints.
@@ -625,6 +628,7 @@ public:
     case ConstraintKind::Defaultable:
     case ConstraintKind::FunctionInput:
     case ConstraintKind::FunctionResult:
+    case ConstraintKind::GlobalOperator:
       return ConstraintClassification::TypeProperty;
 
     case ConstraintKind::Disjunction:

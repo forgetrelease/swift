@@ -750,6 +750,9 @@ enum ScoreKind {
   /// to another type (rhs) via implicit initialization of
   /// `rhs` type with an argument of `lhs` value.
   SK_ImplicitValueConversion,
+  /// An implicit conversion from a value of a type conforming
+  /// to Hashable to AnyHashable.
+  SK_AnyHashableConversion,
   /// A user-defined conversion.
   SK_UserConversion,
   /// A non-trivial function conversion.
@@ -3589,6 +3592,11 @@ public:
                                Type first, Type second,
                                ConstraintLocatorBuilder locator);
 
+  /// Add a new constraint to resolve the given operator type via
+  /// unqualified lookup.
+  void addGlobalOperatorConstraint(Type operatorType,
+                                   ConstraintLocatorBuilder locator);
+
   /// Add a constraint that binds an overload set to a specific choice.
   void addBindOverloadConstraint(Type boundTy, OverloadChoice choice,
                                  ConstraintLocator *locator,
@@ -4805,6 +4813,11 @@ private:
       ArrayRef<TypeVariableType *> componentTypeVars,
       TypeMatchOptions flags,
       ConstraintLocatorBuilder locator);
+
+  /// Attempt to simplify the given GlobalOperator constraint.
+  SolutionKind simplifyGlobalOperatorConstraint(Type type,
+                                                TypeMatchOptions flags,
+                                                ConstraintLocatorBuilder locator);
 
   /// Attempt to simplify the given defaultable constraint.
   SolutionKind simplifyDefaultableConstraint(Type first, Type second,

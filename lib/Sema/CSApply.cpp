@@ -3061,9 +3061,11 @@ namespace {
     }
 
     Expr *visitUnresolvedDeclRefExpr(UnresolvedDeclRefExpr *expr) {
-      // FIXME: We should have generated an overload set from this, in which
-      // case we can emit a typo-correction error here but recover well.
-      return nullptr;
+      auto locator = cs.getConstraintLocator(expr);
+      auto selected = solution.getOverloadChoice(locator);
+
+      return buildDeclRef(selected, expr->getNameLoc(), locator,
+                          expr->isImplicit());
     }
 
     Expr *visitUnresolvedSpecializeExpr(UnresolvedSpecializeExpr *expr) {

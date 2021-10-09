@@ -1638,6 +1638,7 @@ ConstraintSystem::matchTupleTypes(TupleType *tuple1, TupleType *tuple2,
   case ConstraintKind::DefaultClosureType:
   case ConstraintKind::UnresolvedMemberChainBase:
   case ConstraintKind::PropertyWrapper:
+  case ConstraintKind::GlobalOperator:
     llvm_unreachable("Not a conversion");
   }
 
@@ -1777,6 +1778,7 @@ static bool matchFunctionRepresentations(FunctionType::ExtInfo einfo1,
   case ConstraintKind::DefaultClosureType:
   case ConstraintKind::UnresolvedMemberChainBase:
   case ConstraintKind::PropertyWrapper:
+  case ConstraintKind::GlobalOperator:
     return true;
   }
 
@@ -1887,10 +1889,10 @@ assessRequirementFailureImpact(ConstraintSystem &cs, Type requirementType,
 
   // If this requirement is associated with an overload choice let's
   // tie impact to how many times this requirement type is mentioned.
-  if (auto *ODRE = getAsExpr<OverloadedDeclRefExpr>(anchor)) {
+  if (isExpr<OverloadedDeclRefExpr>(anchor) || isExpr<UnresolvedDeclRefExpr>(anchor)) {
     if (auto *typeVar = requirementType->getAs<TypeVariableType>()) {
       unsigned choiceImpact = 0;
-      if (auto choice = cs.findSelectedOverloadFor(ODRE)) {
+      if (auto choice = cs.findSelectedOverloadFor(getAsExpr(anchor))) {
         choice->openedType.visit([&](Type type) {
           if (type->isEqual(typeVar))
             ++choiceImpact;
@@ -2180,6 +2182,7 @@ ConstraintSystem::matchFunctionTypes(FunctionType *func1, FunctionType *func2,
   case ConstraintKind::DefaultClosureType:
   case ConstraintKind::UnresolvedMemberChainBase:
   case ConstraintKind::PropertyWrapper:
+  case ConstraintKind::GlobalOperator:
     llvm_unreachable("Not a relational constraint");
   }
 
@@ -5267,6 +5270,7 @@ ConstraintSystem::matchTypes(Type type1, Type type2, ConstraintKind kind,
     case ConstraintKind::DefaultClosureType:
     case ConstraintKind::UnresolvedMemberChainBase:
     case ConstraintKind::PropertyWrapper:
+    case ConstraintKind::GlobalOperator:
       llvm_unreachable("Not a relational constraint");
     }
   }
@@ -9968,6 +9972,95 @@ ConstraintSystem::simplifyKeyPathApplicationConstraint(
   return unsolved();
 }
 
+void ConstraintSystem::addGlobalOperatorConstraint(
+    Type operatorType, ConstraintLocatorBuilder locator) {
+  (void)simplifyGlobalOperatorConstraint(operatorType,
+                                         TMF_GenerateConstraints,
+                                         locator);
+}
+
+ConstraintSystem::SolutionKind
+ConstraintSystem::simplifyGlobalOperatorConstraint(
+    Type type, TypeMatchOptions flags, ConstraintLocatorBuilder locator) {
+  auto *typeVar = type->getAs<TypeVariableType>();
+  if (!typeVar)
+    return SolutionKind::Error;
+
+  // FIXME: Consider using a dedicated OperatorRefExpr AST node here.
+  auto *declRef = getAsExpr<UnresolvedDeclRefExpr>(locator.getAnchor());
+  auto *declContext = DC;
+  if (declRef->getLoc().isInvalid())
+    declContext = DC->getModuleScopeContext();
+
+  auto lookup = TypeChecker::lookupUnqualified(declContext, declRef->getName(),
+                                               declRef->getLoc());
+
+  llvm::SmallVector<OverloadChoice, 4> candidates;
+  bool hasUnviableCandidates = false;
+  for (auto entry : lookup) {
+    auto *decl = entry.getValueDecl();
+    switch (declRef->getRefKind()) {
+    case DeclRefKind::Ordinary:
+    case DeclRefKind::BinaryOperator:
+      break;
+
+    case DeclRefKind::PrefixOperator:
+      if (decl->getAttrs().hasAttribute<PrefixAttr>())
+        break;
+
+      hasUnviableCandidates = true;
+      continue;
+
+    case DeclRefKind::PostfixOperator:
+      if (decl->getAttrs().hasAttribute<PostfixAttr>())
+        break;
+
+      hasUnviableCandidates = true;
+      continue;
+    }
+
+    OverloadChoice choice =
+         OverloadChoice(Type(), entry.getValueDecl(), declRef->getFunctionRefKind());
+    candidates.push_back(choice);
+  }
+
+  if (!candidates.empty()) {
+    // For operators, sort the results so that non-generic operations come first.
+    // Note: this is part of a performance hack to prefer non-generic operators
+    // to generic operators, because the former is far more efficient to check.
+    std::stable_sort(candidates.begin(), candidates.end(),
+                     [&](OverloadChoice choiceX, OverloadChoice choiceY) -> bool {
+      auto *declX = choiceX.getDecl();
+      auto *declY = choiceY.getDecl();
+      auto xGeneric = declX->getInterfaceType()->getAs<GenericFunctionType>();
+      auto yGeneric = declY->getInterfaceType()->getAs<GenericFunctionType>();
+      if (static_cast<bool>(xGeneric) != static_cast<bool>(yGeneric)) {
+        return xGeneric? false : true;
+      }
+
+      if (!xGeneric)
+        return false;
+
+      unsigned xDepth = xGeneric->getGenericParams().back()->getDepth();
+      unsigned yDepth = yGeneric->getGenericParams().back()->getDepth();
+      return xDepth < yDepth;
+    });
+
+    auto *loc = getConstraintLocator(locator);
+    addOverloadSet(typeVar, candidates, DC, loc);
+    return SolutionKind::Solved;
+  }
+
+  if (!shouldAttemptFixes())
+    return SolutionKind::Error;
+
+  recordPotentialHole(typeVar);
+
+  auto *fix = AllowInvalidOperatorReference::create(
+      *this, getConstraintLocator(locator), hasUnviableCandidates);
+  return recordFix(fix) ? SolutionKind::Error : SolutionKind::Solved;
+}
+
 bool ConstraintSystem::simplifyAppliedOverloadsImpl(
     Constraint *disjunction, TypeVariableType *fnTypeVar,
     FunctionType *argFnType, unsigned numOptionalUnwraps,
@@ -11240,7 +11333,7 @@ ConstraintSystem::simplifyRestrictedConstraintImpl(
     }
 
     addContextualScore();
-    increaseScore(SK_UserConversion); // FIXME: Use separate score kind?
+    increaseScore(SK_AnyHashableConversion);
     if (worseThanBestSolution()) {
       return SolutionKind::Error;
     }
@@ -11764,7 +11857,8 @@ ConstraintSystem::SolutionKind ConstraintSystem::simplifyFixConstraint(
   case FixKind::RemoveExtraneousArguments:
   case FixKind::SpecifyTypeForPlaceholder:
   case FixKind::AllowAutoClosurePointerConversion:
-  case FixKind::IgnoreKeyPathContextualMismatch: {
+  case FixKind::IgnoreKeyPathContextualMismatch:
+  case FixKind::AllowInvalidOperatorReference: {
     return recordFix(fix) ? SolutionKind::Error : SolutionKind::Solved;
   }
 
@@ -12049,6 +12143,9 @@ ConstraintSystem::addConstraintImpl(ConstraintKind kind, Type first,
 
   case ConstraintKind::PropertyWrapper:
     return simplifyPropertyWrapperConstraint(first, second, subflags, locator);
+
+  case ConstraintKind::GlobalOperator:
+    return simplifyGlobalOperatorConstraint(first, subflags, locator);
 
   case ConstraintKind::FunctionInput:
   case ConstraintKind::FunctionResult:
@@ -12574,6 +12671,11 @@ ConstraintSystem::simplifyConstraint(const Constraint &constraint) {
                                              constraint.getSecondType(),
                                              /*flags*/ None,
                                              constraint.getLocator());
+
+  case ConstraintKind::GlobalOperator:
+    return simplifyGlobalOperatorConstraint(constraint.getFirstType(),
+                                            /*flags=*/None,
+                                            constraint.getLocator());
 
   case ConstraintKind::FunctionInput:
   case ConstraintKind::FunctionResult:
