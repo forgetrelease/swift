@@ -18,9 +18,10 @@
 
 #define DEBUG_TYPE "sil-temp-rvalue-opt"
 
-#include "swift/SIL/DebugUtils.h"
 #include "swift/SIL/BasicBlockUtils.h"
+#include "swift/SIL/DebugUtils.h"
 #include "swift/SIL/MemAccessUtils.h"
+#include "swift/SIL/OwnershipUtils.h"
 #include "swift/SIL/SILArgument.h"
 #include "swift/SIL/SILBuilder.h"
 #include "swift/SIL/SILVisitor.h"
@@ -88,8 +89,9 @@ class TempRValueOptPass : public SILFunctionTransform {
   bool
   checkTempObjectDestroy(AllocStackInst *tempObj, CopyAddrInst *copyInst);
 
-  bool extendAccessScopes(CopyAddrInst *copyInst, SILInstruction *lastUseInst,
-                          AliasAnalysis *aa);
+  bool extendAccessAndBorrowScopes(CopyAddrInst *copyInst,
+                                   SILInstruction *lastUseInst,
+                                   AliasAnalysis *aa);
 
   void tryOptimizeCopyIntoTemp(CopyAddrInst *copyInst);
   SILBasicBlock::iterator tryOptimizeStoreIntoTemp(StoreInst *si);
@@ -276,9 +278,24 @@ collectLoads(Operand *addressUse, CopyAddrInst *originalCopy,
     loadInsts.insert(user);
     return true;
   }
-  case SILInstructionKind::LoadBorrowInst:
+  case SILInstructionKind::LoadBorrowInst: {
     loadInsts.insert(user);
-    return true;
+    BorrowedValue borrow(cast<LoadBorrowInst>(user));
+    auto visitEndScope = [&](Operand *op) -> bool {
+      auto *opUser = op->getUser();
+      if (auto *endBorrow = dyn_cast<EndBorrowInst>(opUser)) {
+        if (endBorrow->getParent() != block)
+          return false;
+        loadInsts.insert(endBorrow);
+        return true;
+      }
+      // Don't look further if we see a reborrow.
+      assert(cast<BranchInst>(opUser));
+      return false;
+    };
+    auto res = borrow.visitLocalScopeEndingUses(visitEndScope);
+    return res;
+  }
   case SILInstructionKind::FixLifetimeInst:
     // If we have a fixed lifetime on our alloc_stack, we can just treat it like
     // a load and re-write it so that it is on the old memory or old src object.
@@ -358,8 +375,8 @@ SILInstruction *TempRValueOptPass::getLastUseWhileSourceIsNotModified(
   return nullptr;
 }
 
-/// Tries to move an end_access down to extend the access scope over all uses
-/// of the temporary. For example:
+/// Tries to move an end_access/end_borrow down to extend the access/borrow
+/// scope over all uses of the temporary. For example:
 ///
 ///   %a = begin_access %src
 ///   copy_addr %a to [initialization] %temp : $*T
@@ -368,11 +385,21 @@ SILInstruction *TempRValueOptPass::getLastUseWhileSourceIsNotModified(
 ///
 /// We must not replace %temp with %a after the end_access. Instead we try to
 /// move the end_access after "use %temp".
-bool TempRValueOptPass::extendAccessScopes(
-    CopyAddrInst *copyInst, SILInstruction *lastUseInst, AliasAnalysis *aa) {
+///
+///   %a = begin_borrow %src
+///   copy_addr %a to [initialization] %temp : $*T
+///   end_borrow %a
+///   use %temp
+///
+/// We must not replace %temp with %a after the end_borrow. Instead we try to
+/// move the end_borrow after "use %temp".
+bool TempRValueOptPass::extendAccessAndBorrowScopes(CopyAddrInst *copyInst,
+                                                    SILInstruction *lastUseInst,
+                                                    AliasAnalysis *aa) {
 
   SILValue copySrc = copyInst->getSrc();
   EndAccessInst *endAccessToMove = nullptr;
+  EndBorrowInst *endBorrowToMove = nullptr;
   auto begin = std::next(copyInst->getIterator());
   auto end = std::next(lastUseInst->getIterator());
 
@@ -385,11 +412,26 @@ bool TempRValueOptPass::extendAccessScopes(
       // Is this the end of an access scope of the copy-source?
       if (!aa->isNoAlias(copySrc, endAccess->getSource())) {
         assert(endAccess->getBeginAccess()->getAccessKind() ==
-                 SILAccessKind::Read &&
+                   SILAccessKind::Read &&
                "a may-write end_access should not be in the copysrc lifetime");
         endAccessToMove = endAccess;
       }
-    } else if (endAccessToMove) {
+      continue;
+    }
+    if (auto *endBorrow = dyn_cast<EndBorrowInst>(&inst)) {
+      // Handle extending a single borrow scope only
+      if (endBorrowToMove)
+        return false;
+      // If the copySrc is produced by the borrow, the scope needs to be
+      // extended.
+      auto copyStorage = AccessedStorage::compute(copySrc);
+      if (!copyStorage.isDistinctFrom(
+              AccessedStorage::compute(endBorrow->getOperand()))) {
+        endBorrowToMove = endBorrow;
+      }
+      continue;
+    }
+    if (endAccessToMove) {
       // We cannot move an end_access over a begin_access. This would destroy
       // the proper nesting of accesses.
       if (isa<BeginAccessInst>(&inst) || isa<BeginUnpairedAccessInst>(inst))
@@ -401,11 +443,22 @@ bool TempRValueOptPass::extendAccessScopes(
       // to move endAccessToMove even over such a function call.
       if (aa->mayWriteToMemory(&inst, endAccessToMove->getSource()))
         return false;
+      continue;
+    }
+    if (endBorrowToMove) {
+      // Don't extend borrow scope over instructions that may write to the
+      // borrow operand
+      if (aa->mayWriteToMemory(&inst, endBorrowToMove->getOperand()))
+        return false;
     }
   }
-  if (endAccessToMove)
+  // First move the end_borrow
+  if (endBorrowToMove) {
+    endBorrowToMove->moveAfter(lastUseInst);
+  }
+  if (endAccessToMove) {
     endAccessToMove->moveAfter(lastUseInst);
-
+  }
   return true;
 }
 
@@ -545,7 +598,7 @@ void TempRValueOptPass::tryOptimizeCopyIntoTemp(CopyAddrInst *copyInst) {
   if (!isOSSA && !checkTempObjectDestroy(tempObj, copyInst))
     return;
 
-  if (!extendAccessScopes(copyInst, lastLoadInst, aa))
+  if (!extendAccessAndBorrowScopes(copyInst, lastLoadInst, aa))
     return;
 
   LLVM_DEBUG(llvm::dbgs() << "  Success: replace temp" << *tempObj);
