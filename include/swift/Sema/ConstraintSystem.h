@@ -2392,6 +2392,7 @@ public:
   friend class SplitterStep;
   friend class ComponentStep;
   friend class TypeVariableStep;
+  friend class DisjunctionStep;
   friend class ConjunctionStep;
   friend class ConjunctionElement;
   friend class RequirementFailure;
@@ -2546,6 +2547,10 @@ private:
   /// The set of remembered disjunction choices used to reach
   /// the current constraint system.
   llvm::MapVector<ConstraintLocator *, unsigned> DisjunctionChoices;
+
+  /// The stack of all disjunctions selected during current path in order.
+  /// This stack is managed by the \c DisjunctionStep.
+  llvm::SmallVector<Constraint *, 4> SelectedDisjunctions;
 
   /// A map from applied disjunction constraints to the corresponding
   /// argument function type.
@@ -5221,6 +5226,9 @@ private:
   ///
   /// \returns The selected disjunction.
   Constraint *selectDisjunction();
+  /// Select the best possible disjunction for solver to attempt
+  /// based on the given list.
+  Constraint *selectBestDisjunction(ArrayRef<Constraint *> disjunctions);
 
   /// Pick a conjunction from the InactiveConstraints list.
   ///
@@ -5872,6 +5880,10 @@ public:
   bool isSymmetricOperator() const;
   bool isUnaryOperator() const;
 
+  bool isGenericUnaryOperator() const {
+    return isGenericOperator() && isUnaryOperator();
+  }
+
   void print(llvm::raw_ostream &Out, SourceManager *SM) const {
     Out << "disjunction choice ";
     Choice->print(Out, SM);
@@ -6091,8 +6103,6 @@ class DisjunctionChoiceProducer : public BindingProducer<DisjunctionChoice> {
 
   unsigned Index = 0;
 
-  bool needsGenericOperatorOrdering = true;
-
 public:
   using Element = DisjunctionChoice;
 
@@ -6110,10 +6120,6 @@ public:
     partitionDisjunction(Ordering, PartitionBeginning);
   }
 
-  void setNeedsGenericOperatorOrdering(bool flag) {
-    needsGenericOperatorOrdering = flag;
-  }
-
   Optional<Element> operator()() override {
     if (isExhausted())
       return None;
@@ -6125,18 +6131,6 @@ public:
       ++PartitionIndex;
 
     ++Index;
-
-    auto choice = DisjunctionChoice(CS, currIndex, Choices[Ordering[currIndex]],
-                                    IsExplicitConversion, isBeginningOfPartition);
-    // Partition the generic operators before producing the first generic
-    // operator disjunction choice.
-    if (needsGenericOperatorOrdering && choice.isGenericOperator()) {
-      unsigned nextPartitionIndex = (PartitionIndex < PartitionBeginning.size() ?
-                                     PartitionBeginning[PartitionIndex] : Ordering.size());
-      partitionGenericOperators(Ordering.begin() + currIndex,
-                                Ordering.begin() + nextPartitionIndex);
-      needsGenericOperatorOrdering = false;
-    }
 
     return DisjunctionChoice(CS, currIndex, Choices[Ordering[currIndex]],
                              IsExplicitConversion, isBeginningOfPartition);
@@ -6152,12 +6146,6 @@ private:
   // have to visit all of the options.
   void partitionDisjunction(SmallVectorImpl<unsigned> &Ordering,
                             SmallVectorImpl<unsigned> &PartitionBeginning);
-
-  /// Partition the choices in the range \c first to \c last into groups and
-  /// order the groups in the best order to attempt based on the argument
-  /// function type that the operator is applied to.
-  void partitionGenericOperators(SmallVectorImpl<unsigned>::iterator first,
-                                 SmallVectorImpl<unsigned>::iterator last);
 };
 
 class ConjunctionElementProducer : public BindingProducer<ConjunctionElement> {

@@ -10993,6 +10993,24 @@ retry_after_fail:
           }
         }
 
+        // Disabled overloads need special handling depending mode.
+        if (constraint->isDisabled()) {
+          // In diagnostic mode, invalidate previous common result type if
+          // current overload choice has a fix to make sure that we produce
+          // the best diagnostics possible.
+          if (shouldAttemptFixes()) {
+            if (constraint->getFix())
+              commonResultType = ErrorType::get(getASTContext());
+            return true;
+          }
+
+          // In performance mode, let's skip the disabled overload choice
+          // and continue - this would make sure that common result type
+          // could be found if one exists among the overloads the solver
+          // is actually going to attempt.
+          return false;
+        }
+
         // Determine the type that this choice will have.
         Type choiceType = getEffectiveOverloadType(
             constraint->getLocator(), choice, /*allowMembers=*/true,
@@ -11001,6 +11019,34 @@ retry_after_fail:
           hasUnhandledConstraints = true;
           return true;
         }
+
+        // This is the situation where a property has the same name
+        // as a method e.g.
+        //
+        // protocol P {
+        //   var test: String { get }
+        // }
+        //
+        // extension P {
+        //   var test: String { get { return "" } }
+        // }
+        //
+        // struct S : P {
+        //  func test() -> Int { 42 }
+        // }
+        //
+        // var s = S()
+        // s.test() <- disjunction would have two choices here, one
+        //             for the property from `P` and one for the method of `S`.
+        //
+        // In cases like this, let's exclude property overload from common
+        // result determination because it cannot be applied.
+        //
+        // Note that such overloads cannot be disabled, because they still
+        // have to be checked in diagnostic mode and there is (currently)
+        // no way to re-enable them for diagnostics.
+        if (!choiceType->lookThroughAllOptionalTypes()->is<FunctionType>())
+          return true;
 
         // If types lined up exactly, let's favor this overload choice.
         if (Type(argFnType)->isEqual(choiceType))

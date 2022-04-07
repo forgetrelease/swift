@@ -1675,8 +1675,9 @@ ConstraintSystem::filterDisjunction(
 // right-hand side of a conversion constraint, since having a concrete
 // type that we're converting to can make it possible to split the
 // constraint system into multiple ones.
-static Constraint *selectBestBindingDisjunction(
-    ConstraintSystem &cs, SmallVectorImpl<Constraint *> &disjunctions) {
+static Constraint *
+selectBestBindingDisjunction(ConstraintSystem &cs,
+                             ArrayRef<Constraint *> disjunctions) {
 
   if (disjunctions.empty())
     return nullptr;
@@ -1945,118 +1946,6 @@ static void existingOperatorBindingsForDisjunction(ConstraintSystem &CS,
   }
 }
 
-void DisjunctionChoiceProducer::partitionGenericOperators(
-    SmallVectorImpl<unsigned>::iterator first,
-    SmallVectorImpl<unsigned>::iterator last) {
-  auto *argFnType = CS.getAppliedDisjunctionArgumentFunction(Disjunction);
-  if (!isOperatorDisjunction(Disjunction) || !argFnType)
-    return;
-
-  auto operatorName = Choices[0]->getOverloadChoice().getName();
-  if (!operatorName.getBaseIdentifier().isArithmeticOperator())
-    return;
-
-  SmallVector<unsigned, 4> concreteOverloads;
-  SmallVector<unsigned, 4> numericOverloads;
-  SmallVector<unsigned, 4> sequenceOverloads;
-  SmallVector<unsigned, 4> simdOverloads;
-  SmallVector<unsigned, 4> otherGenericOverloads;
-
-  auto refinesOrConformsTo = [&](NominalTypeDecl *nominal, KnownProtocolKind kind) -> bool {
-    if (!nominal)
-      return false;
-
-    auto *protocol =
-        TypeChecker::getProtocol(CS.getASTContext(), SourceLoc(), kind);
-
-    if (auto *refined = dyn_cast<ProtocolDecl>(nominal))
-      return refined->inheritsFrom(protocol);
-
-    return (bool)TypeChecker::conformsToProtocol(nominal->getDeclaredType(), protocol,
-                                                 CS.DC->getParentModule());
-  };
-
-  // Gather Numeric and Sequence overloads into separate buckets.
-  for (auto iter = first; iter != last; ++iter) {
-    unsigned index = *iter;
-    auto *decl = Choices[index]->getOverloadChoice().getDecl();
-    auto *nominal = decl->getDeclContext()->getSelfNominalTypeDecl();
-
-    if (isSIMDOperator(decl)) {
-      simdOverloads.push_back(index);
-    } else if (!decl->getInterfaceType()->is<GenericFunctionType>()) {
-      concreteOverloads.push_back(index);
-    } else if (refinesOrConformsTo(nominal, KnownProtocolKind::AdditiveArithmetic)) {
-      numericOverloads.push_back(index);
-    } else if (refinesOrConformsTo(nominal, KnownProtocolKind::Sequence)) {
-      sequenceOverloads.push_back(index);
-    } else {
-      otherGenericOverloads.push_back(index);
-    }
-  }
-
-  auto sortPartition = [&](SmallVectorImpl<unsigned> &partition) {
-    llvm::sort(partition, [&](unsigned lhs, unsigned rhs) -> bool {
-      auto *declA =
-          dyn_cast<ValueDecl>(Choices[lhs]->getOverloadChoice().getDecl());
-      auto *declB =
-          dyn_cast<ValueDecl>(Choices[rhs]->getOverloadChoice().getDecl());
-
-      return TypeChecker::isDeclRefinementOf(declA, declB);
-    });
-  };
-
-  // Sort sequence overloads so that refinements are attempted first.
-  // If the solver finds a solution with an overload, it can then skip
-  // subsequent choices that the successful choice is a refinement of.
-  sortPartition(sequenceOverloads);
-
-  // Attempt concrete overloads first.
-  first = std::copy(concreteOverloads.begin(), concreteOverloads.end(), first);
-
-  // Check if any of the known argument types conform to one of the standard
-  // arithmetic protocols. If so, the sovler should attempt the corresponding
-  // overload choices first.
-  for (auto arg : argFnType->getParams()) {
-    auto argType = arg.getPlainType();
-    argType = CS.getFixedTypeRecursive(argType, /*wantRValue=*/true);
-
-    if (argType->isTypeVariableOrMember())
-      continue;
-
-    if (TypeChecker::conformsToKnownProtocol(
-            argType, KnownProtocolKind::AdditiveArithmetic,
-            CS.DC->getParentModule())) {
-      first =
-          std::copy(numericOverloads.begin(), numericOverloads.end(), first);
-      numericOverloads.clear();
-      break;
-    }
-
-    if (TypeChecker::conformsToKnownProtocol(
-            argType, KnownProtocolKind::Sequence,
-            CS.DC->getParentModule())) {
-      first =
-          std::copy(sequenceOverloads.begin(), sequenceOverloads.end(), first);
-      sequenceOverloads.clear();
-      break;
-    }
-
-    if (TypeChecker::conformsToKnownProtocol(
-            argType, KnownProtocolKind::SIMD,
-            CS.DC->getParentModule())) {
-      first = std::copy(simdOverloads.begin(), simdOverloads.end(), first);
-      simdOverloads.clear();
-      break;
-    }
-  }
-
-  first = std::copy(otherGenericOverloads.begin(), otherGenericOverloads.end(), first);
-  first = std::copy(numericOverloads.begin(), numericOverloads.end(), first);
-  first = std::copy(sequenceOverloads.begin(), sequenceOverloads.end(), first);
-  first = std::copy(simdOverloads.begin(), simdOverloads.end(), first);
-}
-
 void DisjunctionChoiceProducer::partitionDisjunction(
     SmallVectorImpl<unsigned> &Ordering,
     SmallVectorImpl<unsigned> &PartitionBeginning) {
@@ -2093,16 +1982,17 @@ void DisjunctionChoiceProducer::partitionDisjunction(
   // First collect some things that we'll generally put near the beginning or
   // end of the partitioning.
   SmallVector<unsigned, 4> favored;
-  SmallVector<unsigned, 4> everythingElse;
+  // start - Operator section
+  SmallVector<unsigned, 4> concreteOperators;
+  SmallVector<unsigned, 4> partiallySpecializedOperators;
+  SmallVector<unsigned, 4> numericOperators;
+  SmallVector<unsigned, 4> sequenceOperators;
   SmallVector<unsigned, 4> simdOperators;
+  SmallVector<unsigned, 4> genericOperators;
+  // end - operator section
+  SmallVector<unsigned, 4> everythingElse;
   SmallVector<unsigned, 4> disabled;
   SmallVector<unsigned, 4> unavailable;
-
-  // Add existing operator bindings to the main partition first. This often
-  // helps the solver find a solution fast.
-  existingOperatorBindingsForDisjunction(CS, Choices, everythingElse);
-  for (auto index : everythingElse)
-    taken.insert(Choices[index]);
 
   // First collect disabled and favored constraints.
   forEachChoice(Choices, [&](unsigned index, Constraint *constraint) -> bool {
@@ -2138,17 +2028,96 @@ void DisjunctionChoiceProducer::partitionDisjunction(
     });
   }
 
-  // Partition SIMD operators.
-  if (isOperatorDisjunction(Disjunction) &&
-      !Choices[0]->getOverloadChoice().getName().getBaseIdentifier().isArithmeticOperator()) {
-    forEachChoice(Choices, [&](unsigned index, Constraint *constraint) -> bool {
-      if (isSIMDOperator(constraint->getOverloadChoice().getDecl())) {
-        simdOperators.push_back(index);
-        return true;
+  bool isArithmeticOperator = false;
+
+  if (isOperatorDisjunction(Disjunction)) {
+    auto operatorName = Choices[0]->getOverloadChoice().getName();
+    isArithmeticOperator =
+        operatorName.getBaseIdentifier().isArithmeticOperator();
+  }
+
+  if (isArithmeticOperator) {
+    auto refinesOrConformsTo = [&](NominalTypeDecl *nominal,
+                                   KnownProtocolKind kind) -> bool {
+      if (!nominal)
+        return false;
+
+      auto *protocol =
+          TypeChecker::getProtocol(CS.getASTContext(), SourceLoc(), kind);
+
+      if (auto *refined = dyn_cast<ProtocolDecl>(nominal))
+        return refined->inheritsFrom(protocol);
+
+      return (bool)TypeChecker::conformsToProtocol(
+          nominal->getDeclaredType(), protocol, CS.DC->getParentModule());
+    };
+
+    auto isPartiallySpecialized = [&](ValueDecl *choice) -> bool {
+      auto choiceType = choice->getInterfaceType();
+
+      auto *fnType = choiceType->getAs<AnyFunctionType>();
+      if (!(fnType && fnType->is<GenericFunctionType>()))
+        return false;
+
+      if (choice->getDeclContext()->getSelfNominalTypeDecl())
+        fnType = fnType->getResult()->castTo<AnyFunctionType>();
+
+      // Type has to be either bound generic e.g. `S<T>`,
+      // or unbound generic e.g. `Array`, or concrete.
+      auto isAcceptableType = [&](Type type) {
+        if (auto *UGT = type->getAs<UnboundGenericType>())
+          return isa<NominalTypeDecl>(UGT->getDecl());
+
+        return type->is<BoundGenericType>() ||
+               !(type->hasTypeParameter() || type->hasDependentMember());
+      };
+
+      if (llvm::all_of(fnType->getParams(),
+                       [&](const AnyFunctionType::Param &param) {
+                         return isAcceptableType(param.getPlainType());
+                       })) {
+        return isAcceptableType(fnType->getResult());
       }
 
       return false;
+    };
+
+    forEachChoice(Choices, [&](unsigned index, Constraint *choice) -> bool {
+      auto *decl = choice->getOverloadChoice().getDecl();
+      auto *nominal = decl->getDeclContext()->getSelfNominalTypeDecl();
+
+      if (isSIMDOperator(decl)) {
+        simdOperators.push_back(index);
+      } else if (!decl->getInterfaceType()->is<GenericFunctionType>()) {
+        concreteOperators.push_back(index);
+      } else if (isPartiallySpecialized(decl)) {
+        partiallySpecializedOperators.push_back(index);
+      } else if (refinesOrConformsTo(nominal,
+                                     KnownProtocolKind::AdditiveArithmetic)) {
+        numericOperators.push_back(index);
+      } else if (refinesOrConformsTo(nominal, KnownProtocolKind::Sequence)) {
+        sequenceOperators.push_back(index);
+      } else {
+        genericOperators.push_back(index);
+      }
+      return true;
     });
+
+    auto sortPartition = [&](SmallVectorImpl<unsigned> &partition) {
+      llvm::sort(partition, [&](unsigned lhs, unsigned rhs) -> bool {
+        auto *declA =
+            dyn_cast<ValueDecl>(Choices[lhs]->getOverloadChoice().getDecl());
+        auto *declB =
+            dyn_cast<ValueDecl>(Choices[rhs]->getOverloadChoice().getDecl());
+
+        return TypeChecker::isDeclRefinementOf(declA, declB);
+      });
+    };
+
+    // Sort sequence overloads so that refinements are attempted first.
+    // If the solver finds a solution with an overload, it can then skip
+    // subsequent choices that the successful choice is a refinement of.
+    sortPartition(sequenceOperators);
   }
 
   // Gather the remaining options.
@@ -2168,8 +2137,54 @@ void DisjunctionChoiceProducer::partitionDisjunction(
       };
 
   appendPartition(favored);
+
+  if (isArithmeticOperator) {
+    appendPartition(concreteOperators);
+    appendPartition(partiallySpecializedOperators);
+
+    if (auto *argFnType = CS.getAppliedDisjunctionArgumentFunction(Disjunction)) {
+      // Check if any of the known argument types conform to one of the standard
+      // arithmetic protocols. If so, the solver should attempt the
+      // corresponding overload choices first.
+      for (auto arg : argFnType->getParams()) {
+        auto argType = arg.getPlainType();
+        argType = CS.getFixedTypeRecursive(argType, /*wantRValue=*/true);
+
+        if (argType->isTypeVariableOrMember())
+          continue;
+
+        if (TypeChecker::conformsToKnownProtocol(
+                argType, KnownProtocolKind::AdditiveArithmetic,
+                CS.DC->getParentModule())) {
+          appendPartition(numericOperators);
+          numericOperators.clear();
+          break;
+        }
+
+        if (TypeChecker::conformsToKnownProtocol(argType,
+                                                 KnownProtocolKind::Sequence,
+                                                 CS.DC->getParentModule())) {
+          appendPartition(sequenceOperators);
+          sequenceOperators.clear();
+          break;
+        }
+
+        if (TypeChecker::conformsToKnownProtocol(
+                argType, KnownProtocolKind::SIMD, CS.DC->getParentModule())) {
+          appendPartition(simdOperators);
+          simdOperators.clear();
+          break;
+        }
+      }
+    }
+
+    appendPartition(genericOperators);
+    appendPartition(numericOperators);
+    appendPartition(sequenceOperators);
+    appendPartition(simdOperators);
+  }
+
   appendPartition(everythingElse);
-  appendPartition(simdOperators);
   appendPartition(unavailable);
   appendPartition(disabled);
 
@@ -2183,6 +2198,175 @@ Constraint *ConstraintSystem::selectDisjunction() {
   if (disjunctions.empty())
     return nullptr;
 
+  // If there are only a few disjunctions available,
+  // let's just use selection alogirthm.
+  if (disjunctions.size() <= 2)
+    return selectBestDisjunction(disjunctions);
+
+  if (SelectedDisjunctions.empty())
+    return selectBestDisjunction(disjunctions);
+
+  auto *lastDisjunction = SelectedDisjunctions.back()->getLocator();
+
+  // First, let's built a dictionary of all disjunctions accessible
+  // via their anchoring expressions.
+  llvm::SmallDenseMap<ASTNode, Constraint *> anchoredDisjunctions;
+  for (auto *disjunction : disjunctions) {
+    if (auto anchor = simplifyLocatorToAnchor(disjunction->getLocator()))
+      anchoredDisjunctions.insert({anchor, disjunction});
+  }
+
+  auto lookupDisjunctionInCache =
+      [&anchoredDisjunctions](Expr *expr) -> Constraint * {
+    auto disjunction = anchoredDisjunctions.find(expr);
+    return disjunction != anchoredDisjunctions.end() ? disjunction->second
+                                                     : nullptr;
+  };
+
+  auto findDisjunction = [&](Expr *expr) -> Constraint * {
+    if (!expr || !(isa<UnresolvedDotExpr>(expr) || isa<ApplyExpr>(expr)))
+      return nullptr;
+
+    // For applications i.e. calls, let's match their function first.
+    if (auto *apply = dyn_cast<ApplyExpr>(expr)) {
+      if (auto disjunction = lookupDisjunctionInCache(apply->getFn()))
+        return disjunction;
+    }
+
+    return lookupDisjunctionInCache(expr);
+  };
+
+  auto findClosestDisjunction = [&](Expr *expr) -> Constraint * {
+    Constraint *selectedDisjunction = nullptr;
+    expr->forEachChildExpr([&](Expr *expr) -> Expr * {
+      if (auto *disjunction = findDisjunction(expr)) {
+        selectedDisjunction = disjunction;
+        return nullptr;
+      }
+      return expr;
+    });
+    return selectedDisjunction;
+  };
+
+  if (auto *expr = getAsExpr(lastDisjunction->getAnchor())) {
+    // If this disjunction is derived from an overload set expression,
+    // let's look one level higher since its immediate parent is an
+    // operator application.
+    if (isa<OverloadedDeclRefExpr>(expr))
+      expr = getParentExpr(expr);
+
+    bool isMemberRef = isa<UnresolvedDotExpr>(expr);
+
+    // Implicit `.init` calls need some special handling.
+    if (lastDisjunction->isLastElement<LocatorPathElt::ConstructorMember>()) {
+      if (auto *call = dyn_cast<CallExpr>(expr)) {
+        expr = call->getFn();
+        isMemberRef = true;
+      }
+    }
+
+    if (isMemberRef) {
+      auto *parent = getParentExpr(expr);
+      // If this is a member application e.g. `.test(...)`,
+      // then let's see whether one of the arguments is a
+      // closure and if so, select the "best" disjunction
+      // from its body to be attempted next. This helps to
+      // type-check operator chains in a freshly resolved
+      // closure before moving to the next member in that
+      // chain of expressions for example:
+      //
+      // arr.map { $0 + 1 * 3 ... }.filter { ... }.reduce(0, +)
+      //
+      // Attempting to solve the body of the `.map` right after
+      // it has been selected helps to split up the constraint
+      // system.
+      if (auto *call = dyn_cast_or_null<CallExpr>(parent)) {
+        if (auto *arguments = call->getArgs()) {
+          for (const auto &argument : *arguments) {
+            auto *argExpr = argument.getExpr()->getSemanticsProvidingExpr();
+            auto *closure = dyn_cast<ClosureExpr>(argExpr);
+            // Even if the body of this closure participates in type-check
+            // it would be handled one statement at a time via a conjunction
+            // constraint.
+            if (!(closure && closure->hasSingleExpressionBody()))
+              continue;
+
+            // Note that it's important that we select the best possible
+            // disjunction from the body of the closure first, it helps
+            // to prune the solver space.
+            SmallVector<Constraint *, 4> innerDisjunctions;
+
+            for (auto *disjunction : disjunctions) {
+              auto *choice = disjunction->getNestedConstraints()[0];
+              if (choice->getKind() == ConstraintKind::BindOverload &&
+                  choice->getOverloadUseDC() == closure)
+                innerDisjunctions.push_back(disjunction);
+            }
+
+            if (!innerDisjunctions.empty())
+              return selectBestDisjunction(innerDisjunctions);
+          }
+        }
+      }
+    }
+
+    // First, let's see whether there is a direct parent in scope, since
+    // parent is the one which is going to use the result type of the
+    // last disjunction.
+    if (auto *parent = getParentExpr(expr)) {
+      if (isMemberRef && isa<CallExpr>(parent))
+        parent = getParentExpr(parent);
+
+      if (auto disjunction = findDisjunction(parent))
+        return disjunction;
+
+      // If parent is a tuple, let's collect disjunctions associated
+      // with its elements and run selection algorithm on them.
+      if (auto *tuple = dyn_cast_or_null<TupleExpr>(parent)) {
+        auto *elementExpr = expr;
+
+        // If current element has any unsolved disjunctions, let's
+        // attempt the closest to keep solving the local element.
+        if (auto disjunction = findClosestDisjunction(elementExpr))
+          return disjunction;
+
+        SmallVector<Constraint *, 4> tupleDisjunctions;
+        // Find all of the disjunctions that are nested inside of
+        // the current tuple for selection.
+        for (auto *disjunction : disjunctions) {
+          auto anchor = disjunction->getLocator()->getAnchor();
+          if (auto *expr = getAsExpr(anchor)) {
+            while ((expr = getParentExpr(expr))) {
+              if (expr == tuple) {
+                tupleDisjunctions.push_back(disjunction);
+                break;
+              }
+            }
+          }
+        }
+
+        // Let's use a pool of all disjunctions associated with
+        // this tuple. Picking the best one, regardless of the
+        // element would stir solving towards solving everything
+        // in a particular element.
+        if (!tupleDisjunctions.empty())
+          return selectBestDisjunction(tupleDisjunctions);
+      }
+    }
+
+    // If parent is not available (e.g. because it's already bound),
+    // let's look into the arguments, and find the closest unbound one.
+    if (auto *closestDisjunction = findClosestDisjunction(expr))
+      return closestDisjunction;
+  }
+
+  return selectBestDisjunction(disjunctions);
+}
+
+Constraint *
+ConstraintSystem::selectBestDisjunction(ArrayRef<Constraint *> disjunctions) {
+  assert(!disjunctions.empty());
+
   if (auto *disjunction = selectBestBindingDisjunction(*this, disjunctions))
     return disjunction;
 
@@ -2195,8 +2379,15 @@ Constraint *ConstraintSystem::selectDisjunction() {
         unsigned firstFavored = first->countFavoredNestedConstraints();
         unsigned secondFavored = second->countFavoredNestedConstraints();
 
-        if (!isOperatorDisjunction(first) || !isOperatorDisjunction(second))
+        if (!isOperatorDisjunction(first) || !isOperatorDisjunction(second)) {
+          // If one of the sides has favored overloads, let's prefer it
+          // since it's a strong enough signal that there is something
+          // known about the arguments associated with the call.
+          if (firstFavored == 0 || secondFavored == 0)
+            return firstFavored > secondFavored;
+
           return firstActive < secondActive;
+        }
 
         if (firstFavored == secondFavored) {
           // Look for additional choices that are "favored"
