@@ -598,7 +598,7 @@ void SILGenFunction::emitProlog(CaptureInfo captureInfo,
       if (param->getType()->isStructurallyUninhabited()) {
         SILLocation unreachableLoc(param);
         unreachableLoc.markAsPrologue();
-        B.createUnreachable(unreachableLoc);
+        emitCleanupsAndCreateUnreachable(unreachableLoc);
         break;
       }
     }

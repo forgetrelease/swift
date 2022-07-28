@@ -834,7 +834,7 @@ void SILGenFunction::emitArtificialTopLevel(Decl *mainDecl) {
       exitCode = B.createStruct(moduleLoc, retType, exitCode);
       SILValue exitCall = B.createFunctionRef(moduleLoc, exitSILFunc);
       B.createApply(moduleLoc, exitCall, {}, {exitCode});
-      B.createUnreachable(moduleLoc);
+      emitCleanupsAndCreateUnreachable(moduleLoc);
     }
 
     if (mainFunc->hasThrows()) {
@@ -975,7 +975,7 @@ void SILGenFunction::emitAsyncMainThreadStart(SILDeclRef entryPoint) {
   SILValue drainQueueFunc =
       B.createFunctionRefFor(moduleLoc, drainQueueSILFunc);
   B.createApply(moduleLoc, drainQueueFunc, {}, {});
-  B.createUnreachable(moduleLoc);
+  emitCleanupsAndCreateUnreachable(moduleLoc);
   return;
 }
 
