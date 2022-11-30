@@ -355,17 +355,19 @@ bool ConstraintSystem::simplify() {
 
     if (isDebugMode()) {
       auto &log = llvm::errs();
-      log.indent(solverState->getCurrentIndent());
-      log << "(considering -> ";
-      constraint->print(log, &getASTContext().SourceMgr);
+      log.indent(solverState->getCurrentIndent()) << "|"
+                                                  << "\n";
+      log.indent(solverState->getCurrentIndent()) << "`-> Considering -> ";
+      constraint->print(log, &getASTContext().SourceMgr,
+                        solverState->getCurrentIndent() + 2);
       log << "\n";
 
       // {Dis, Con}junction are returned unsolved in \c simplifyConstraint() and
       // handled separately by solver steps.
       if (constraint->getKind() != ConstraintKind::Disjunction &&
           constraint->getKind() != ConstraintKind::Conjunction) {
-        log.indent(solverState->getCurrentIndent() + 2)
-            << "(simplification result:\n";
+        log.indent(solverState->getCurrentIndent()) << "|";
+        log.indent(2) << "`- Simplification result:\n";
       }
     }
 
@@ -375,8 +377,8 @@ bool ConstraintSystem::simplify() {
       retireFailedConstraint(constraint);
       if (isDebugMode()) {
         auto &log = llvm::errs();
-        log.indent(solverState->getCurrentIndent() + 2) << ")\n";
-        log.indent(solverState->getCurrentIndent() + 2) << "(outcome: error)\n";
+        log.indent(solverState->getCurrentIndent()) << "|";
+        log.indent(2) << "`-- Outcome: error\n";
       }
       break;
 
@@ -386,9 +388,8 @@ bool ConstraintSystem::simplify() {
       retireConstraint(constraint);
       if (isDebugMode()) {
         auto &log = llvm::errs();
-        log.indent(solverState->getCurrentIndent() + 2) << ")\n";
-        log.indent(solverState->getCurrentIndent() + 2)
-            << "(outcome: simplified)\n";
+        log.indent(solverState->getCurrentIndent()) << "|";
+        log.indent(2) << "`-- Outcome: simplified\n";
       }
       break;
 
@@ -397,16 +398,10 @@ bool ConstraintSystem::simplify() {
         ++solverState->NumUnsimplifiedConstraints;
       if (isDebugMode()) {
         auto &log = llvm::errs();
-        log.indent(solverState->getCurrentIndent() + 2) << ")\n";
-        log.indent(solverState->getCurrentIndent() + 2)
-            << "(outcome: unsolved)\n";
+        log.indent(solverState->getCurrentIndent()) << "|";
+        log.indent(2) << "`-- Outcome: unsolved\n";
       }
       break;
-    }
-
-    if (isDebugMode()) {
-      auto &log = llvm::errs();
-      log.indent(solverState->getCurrentIndent()) << ")\n";
     }
 
     // Check whether a constraint failed. If so, we're done.
@@ -1665,10 +1660,11 @@ ConstraintSystem::filterDisjunction(
     }
 
     if (isDebugMode()) {
-      llvm::errs().indent(solverState ? solverState->getCurrentIndent() : 0)
-        << "(disabled disjunction term ";
+      auto &log = llvm::errs();
+      log.indent(solverState ? solverState->getCurrentIndent() : 0) << "|";
+      log.indent(2) << "Disabled disjunction term ";
       constraint->print(llvm::errs(), &ctx.SourceMgr);
-      llvm::errs() << ")\n";
+      log << "\n";
     }
 
     if (restoreOnFail)
@@ -1724,10 +1720,10 @@ ConstraintSystem::filterDisjunction(
     }
 
     if (isDebugMode()) {
-      llvm::errs().indent(solverState ? solverState->getCurrentIndent(): 0)
-        << "(introducing single enabled disjunction term ";
+      auto &log = llvm::errs();
+      log.indent(solverState ? solverState->getCurrentIndent() : 2) << "|";
+      log.indent(2) << "Introducing single enabled disjunction term ";
       choice->print(llvm::errs(), &ctx.SourceMgr);
-      llvm::errs() << ")\n";
     }
 
     simplifyDisjunctionChoice(choice);

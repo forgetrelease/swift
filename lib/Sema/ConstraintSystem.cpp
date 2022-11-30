@@ -3571,8 +3571,8 @@ void ConstraintSystem::resolveOverload(ConstraintLocator *locator,
     PO.PrintTypesForDebugging = true;
 
     auto &log = llvm::errs();
-    log.indent(solverState ? solverState->getCurrentIndent() : 2);
-    log << "(overload set choice binding ";
+    log.indent(solverState ? solverState->getCurrentIndent() : 2) << "|";
+    log.indent(2) << "Overload set choice binding ";
     boundType->print(log, PO);
     log << " := ";
     adjustedRefType->print(log, PO);
@@ -3590,7 +3590,7 @@ void ConstraintSystem::resolveOverload(ConstraintLocator *locator,
           [&]() { log << ", "; });
       log << "]";
     }
-    log << ")\n";
+    log << "\n";
   }
 
   if (auto *decl = choice.getDeclOrNull()) {

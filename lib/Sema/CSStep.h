@@ -469,14 +469,15 @@ private:
     
     if (CS.isDebugMode()) {
       auto &log = getDebugLogger();
-      log << "(solving component #" << Index << '\n';
+      log << "{Solving component #" << Index << '\n';
     }
     
     ComponentScope = std::make_unique<Scope>(*this);
     
     if (CS.isDebugMode()) {
       auto &log = getDebugLogger();
-      log << "Type variables in scope = "
+      //      log.indent(CS.solverState->getCurrentIndent());
+      log << "`- Type variables in scope = "
           << "[";
       auto typeVars = CS.getTypeVariables();
       PrintOptions PO;
@@ -536,9 +537,11 @@ public:
 
       if (CS.isDebugMode()) {
         auto &log = getDebugLogger();
-        log << "(attempting ";
+        log << "{\n";
+        log.indent(CS.solverState->getCurrentIndent() + 2);
+        log << "!> Attempting ";
         choice->print(log, &CS.getASTContext().SourceMgr, CS.solverState->getCurrentIndent() + 2);
-        log << '\n';
+        log << "\n";
       }
 
       {
@@ -557,7 +560,7 @@ public:
       }
 
       if (CS.isDebugMode())
-        getDebugLogger() << ")\n";
+        getDebugLogger() << "}\n";
 
       // If this binding didn't match, let's check if we've attempted
       // enough bindings to stop, because some producers might need
