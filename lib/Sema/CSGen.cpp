@@ -2897,12 +2897,19 @@ namespace {
       // closure is dependent on the outer closure's param type, as well as
       // cases like `for i in x where bar({ i })` where there's a dependency on
       // the type variable for the pattern `i`.
-      struct CollectVarRefs : public ASTWalker {
+      struct ClosureAnalyzer : public ASTWalker {
         ConstraintSystem &cs;
+        ClosureExpr *closure;
+
+        DeclContext *currentDC;
+
         llvm::SmallPtrSet<TypeVariableType *, 4> varRefs;
+        llvm::SmallVector<ReturnStmt *, 4> results;
+
         bool hasErrorExprs = false;
 
-        CollectVarRefs(ConstraintSystem &cs) : cs(cs) { }
+        ClosureAnalyzer(ConstraintSystem &cs, ClosureExpr *closure)
+            : cs(cs), closure(closure), currentDC(closure) {}
 
         bool shouldWalkCaptureInitializerExpressions() override { return true; }
 
@@ -2911,6 +2918,11 @@ namespace {
           // it wouldn't be possible to infer its type.
           if (isa<ErrorExpr>(expr))
             hasErrorExprs = true;
+
+          if (auto *closure = getAsExpr<ClosureExpr>(expr)) {
+            currentDC = closure;
+            return Action::Continue(expr);
+          }
 
           // Retrieve type variables from references to var decls.
           if (auto *declRef = dyn_cast<DeclRefExpr>(expr)) {
@@ -2941,16 +2953,42 @@ namespace {
 
           return Action::Continue(expr);
         }
-      } collectVarRefs(CS);
 
-      closure->walk(collectVarRefs);
+        PostWalkResult<Expr *> walkToExprPost(Expr *expr) override {
+          if (auto *closure = dyn_cast<ClosureExpr>(expr)) {
+            assert(currentDC == closure);
+            currentDC = closure->getParent();
+          }
+
+          return Action::Continue(expr);
+        }
+
+        PreWalkResult<Stmt *> walkToStmtPre(Stmt *S) override {
+          if (auto *result = getAsStmt<ReturnStmt>(S)) {
+            if (currentDC == closure)
+              results.push_back(result);
+          }
+
+          return Action::Continue(S);
+        }
+
+        PreWalkAction walkToDeclPre(Decl *D) override {
+          return Action::VisitChildrenIf(isa<PatternBindingDecl>(D));
+        }
+
+        PreWalkResult<Pattern *> walkToPatternPre(Pattern *P) override {
+          return Action::SkipChildren(P);
+        }
+      } analyzer(CS, closure);
+
+      closure->walk(analyzer);
 
       // If walker discovered error expressions, let's fail constraint
       // generation only if closure is going to participate
       // in the type-check. This allows us to delay validation of
       // multi-statement closures until body is opened.
       if (CS.participatesInInference(closure) &&
-          collectVarRefs.hasErrorExprs) {
+          analyzer.hasErrorExprs) {
         return Type();
       }
 
@@ -2959,13 +2997,13 @@ namespace {
         return Type();
 
       SmallVector<TypeVariableType *, 4> referencedVars{
-          collectVarRefs.varRefs.begin(), collectVarRefs.varRefs.end()};
+          analyzer.varRefs.begin(), analyzer.varRefs.end()};
 
       CS.addUnsolvedConstraint(Constraint::create(
           CS, ConstraintKind::DefaultClosureType, closureType, inferredType,
           locator, referencedVars));
 
-      CS.setClosureType(closure, inferredType);
+      CS.setClosure(closure, {inferredType, analyzer.results});
       return closureType;
     }
 
@@ -3739,12 +3777,28 @@ namespace {
       SmallVector<std::pair<Type, ConstraintLocator *>, 4> elements;
       elements.reserve(expr->getNumElements());
 
+
       for (auto *element : expr->getElements()) {
+        auto contextualTypePurpose = CS.getContextualTypePurpose(element);
+
         elements.emplace_back(CS.getType(element),
-                              CS.getConstraintLocator(element));
+                              contextualTypePurpose == CTP_Unused
+                                  ? CS.getConstraintLocator(element)
+                                  : CS.getConstraintLocator(
+                                        element, LocatorPathElt::ContextualType(
+                                                     contextualTypePurpose)));
       }
 
-      auto resultTy = CS.getType(expr->getVar());
+      Type resultTy;
+
+      if (auto *var = expr->getVar()) {
+        resultTy = CS.getType(var);
+      } else {
+        resultTy = expr->getType();
+      }
+
+      assert(resultTy);
+
       // The type of a join expression is obtained by performing
       // a "join-meet" operation on deduced types of its elements
       // and the underlying variable.
@@ -3968,7 +4022,7 @@ namespace {
       if (auto closure = dyn_cast<ClosureExpr>(expr)) {
         FunctionType *closureTy =
             inferClosureType(closure, /*allowResultBindToHole=*/true);
-        CS.setClosureType(closure, closureTy);
+        CS.setClosure(closure, {closureTy, /*returns=*/{}});
         CS.setType(closure, closureTy);
       } else {
         TypeVariableType *exprType = CS.createTypeVariable(

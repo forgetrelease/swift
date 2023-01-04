@@ -1563,6 +1563,15 @@ static ValueDecl *getCalledValue(Expr *E, bool skipFunctionConversions) {
   return nullptr;
 }
 
+OpaqueValueExpr *OpaqueValueExpr::createImplicit(ASTContext &ctx, Type Ty,
+                                                 bool isPlaceholder,
+                                                 AllocationArena arena) {
+  auto *mem =
+      ctx.Allocate(sizeof(OpaqueValueExpr), alignof(OpaqueValueExpr), arena);
+  return new (mem) OpaqueValueExpr(
+      /*Range=*/SourceRange(), Ty, isPlaceholder);
+}
+
 PropertyWrapperValuePlaceholderExpr *
 PropertyWrapperValuePlaceholderExpr::create(ASTContext &ctx, SourceRange range,
                                             Type ty, Expr *wrappedValue,
@@ -2519,9 +2528,18 @@ RegexLiteralExpr::createParsed(ASTContext &ctx, SourceLoc loc,
                                     /*implicit*/ false);
 }
 
-TypeJoinExpr::TypeJoinExpr(DeclRefExpr *varRef, ArrayRef<Expr *> elements)
-  : Expr(ExprKind::TypeJoin, /*implicit=*/true, Type()), Var(varRef) {
-  assert(Var);
+TypeJoinExpr::TypeJoinExpr(llvm::PointerUnion<DeclRefExpr *, TypeBase *> result,
+                           ArrayRef<Expr *> elements)
+    : Expr(ExprKind::TypeJoin, /*implicit=*/true, Type()), Var(nullptr) {
+
+  if (auto *varRef = result.dyn_cast<DeclRefExpr *>()) {
+    assert(varRef);
+    Var = varRef;
+  } else {
+    auto joinType = Type(result.get<TypeBase *>());
+    assert(joinType && "expected non-null type");
+    setType(joinType);
+  }
 
   Bits.TypeJoinExpr.NumElements = elements.size();
   // Copy elements.
@@ -2529,11 +2547,12 @@ TypeJoinExpr::TypeJoinExpr(DeclRefExpr *varRef, ArrayRef<Expr *> elements)
                           getTrailingObjects<Expr *>());
 }
 
-TypeJoinExpr *TypeJoinExpr::create(ASTContext &ctx, DeclRefExpr *var,
-                                   ArrayRef<Expr *> elements) {
+TypeJoinExpr *TypeJoinExpr::createImpl(
+    ASTContext &ctx, llvm::PointerUnion<DeclRefExpr *, TypeBase *> varOrType,
+    ArrayRef<Expr *> elements, AllocationArena arena) {
   size_t size = totalSizeToAlloc<Expr *>(elements.size());
-  void *mem = ctx.Allocate(size, alignof(TypeJoinExpr));
-  return new (mem) TypeJoinExpr(var, elements);
+  void *mem = ctx.Allocate(size, alignof(TypeJoinExpr), arena);
+  return new (mem) TypeJoinExpr(varOrType, elements);
 }
 
 SourceRange MacroExpansionExpr::getSourceRange() const {

@@ -2778,6 +2778,37 @@ struct DeclReferenceType {
   Type adjustedReferenceType;
 };
 
+/// Describes a closure that is being processed by the constriant solver.
+struct ClosureInfo {
+private:
+  FunctionType *Type;
+  SmallVector<ReturnStmt *, 2> Returns;
+
+public:
+  ClosureInfo(FunctionType *closureType, ArrayRef<ReturnStmt *> returns)
+      : Type(closureType), Returns(returns.begin(), returns.end()) {}
+
+  FunctionType *getType() const { return Type; }
+  ArrayRef<ReturnStmt *> getReturns() const { return Returns; }
+
+  bool solveReturnIndividually(ReturnStmt *R) const {
+    if (!hasMultipleReturns())
+      return true;
+
+    // Implement the logic to determine whether the return
+    // should be solved separately from others.
+    //
+    // For example: if there are no literal expressions
+    // in the given return statement it should be possible
+    // to solve it separately and simply use the resulting
+    // type in the join.
+
+    return false;
+  }
+
+  bool hasMultipleReturns() const { return Returns.size() > 1; }
+};
+
 /// Describes a system of constraints on type variables, the
 /// solution of which assigns concrete types to each of the type variables.
 /// Constraint systems are typically generated given an (untyped) expression.
@@ -2885,7 +2916,7 @@ private:
 
   /// Maps discovered closures to their types inferred
   /// from declared parameters/result and body.
-  llvm::MapVector<const ClosureExpr *, FunctionType *> ClosureTypes;
+  llvm::MapVector<const ClosureExpr *, ClosureInfo> Closures;
 
   /// This is a *global* list of all result builder bodies that have
   /// been determined to be incorrect by failing constraint generation.
@@ -3511,8 +3542,8 @@ public:
     /// The length of \c ResolvedOverloads.
     unsigned numResolvedOverloads;
 
-    /// The length of \c ClosureTypes.
-    unsigned numInferredClosureTypes;
+    /// The length of \c Closures.
+    unsigned numInferredClosures;
 
     /// The length of \c contextualTypes.
     unsigned numContextualTypes;
@@ -3712,11 +3743,18 @@ public:
     return !IgnoredArguments.empty();
   }
 
-  void setClosureType(const ClosureExpr *closure, FunctionType *type) {
+  void setClosure(const ClosureExpr *closure, ClosureInfo &&info) {
     assert(closure);
-    assert(type && "Expected non-null type");
-    assert(ClosureTypes.count(closure) == 0 && "Cannot reset closure type");
-    ClosureTypes.insert({closure, type});
+    assert(info.getType() && "Expected non-null type");
+    assert(Closures.count(closure) == 0 && "Cannot reset closure info");
+    (void)Closures.insert({closure, std::move(info)});
+  }
+
+  NullablePtr<ClosureInfo> getClosureInfo(const ClosureExpr *closure) const {
+    auto result = Closures.find(closure);
+    if (result != Closures.end())
+      return const_cast<ClosureInfo *>(&result->second);
+    return {};
   }
 
   FunctionType *getClosureType(const ClosureExpr *closure) const {
@@ -3726,9 +3764,9 @@ public:
   }
 
   FunctionType *getClosureTypeIfAvailable(const ClosureExpr *closure) const {
-    auto result = ClosureTypes.find(closure);
-    if (result != ClosureTypes.end())
-      return result->second;
+    auto result = Closures.find(closure);
+    if (result != Closures.end())
+      return result->second.getType();
     return nullptr;
   }
 
