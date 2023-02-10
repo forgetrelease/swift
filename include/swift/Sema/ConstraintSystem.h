@@ -5273,8 +5273,9 @@ private:
 
   /// Pick a disjunction from the InactiveConstraints list.
   ///
-  /// \returns The selected disjunction.
-  Constraint *selectDisjunction();
+  /// \returns The selected disjunction and a set of it's favored choices.
+  Optional<std::pair<Constraint *, llvm::TinyPtrVector<Constraint *>>>
+  selectDisjunction();
 
   /// Pick a conjunction from the InactiveConstraints list.
   ///
@@ -6194,7 +6195,8 @@ class DisjunctionChoiceProducer : public BindingProducer<DisjunctionChoice> {
 public:
   using Element = DisjunctionChoice;
 
-  DisjunctionChoiceProducer(ConstraintSystem &cs, Constraint *disjunction)
+  DisjunctionChoiceProducer(ConstraintSystem &cs, Constraint *disjunction,
+                            llvm::TinyPtrVector<Constraint *> &favorites)
       : BindingProducer(cs, disjunction->shouldRememberChoice()
                                 ? disjunction->getLocator()
                                 : nullptr),
@@ -6203,6 +6205,11 @@ public:
         Disjunction(disjunction) {
     assert(disjunction->getKind() == ConstraintKind::Disjunction);
     assert(!disjunction->shouldRememberChoice() || disjunction->getLocator());
+
+    // Mark constraints as favored. This information
+    // is going to be used by partitioner.
+    for (auto *choice : favorites)
+      cs.favorConstraint(choice);
 
     // Order and partition the disjunction choices.
     partitionDisjunction(Ordering, PartitionBeginning);
@@ -6248,8 +6255,9 @@ private:
   // Partition the choices in the disjunction into groups that we will
   // iterate over in an order appropriate to attempt to stop before we
   // have to visit all of the options.
-  void partitionDisjunction(SmallVectorImpl<unsigned> &Ordering,
-                            SmallVectorImpl<unsigned> &PartitionBeginning);
+  void
+  partitionDisjunction(SmallVectorImpl<unsigned> &Ordering,
+                       SmallVectorImpl<unsigned> &PartitionBeginning);
 
   /// Partition the choices in the range \c first to \c last into groups and
   /// order the groups in the best order to attempt based on the argument
