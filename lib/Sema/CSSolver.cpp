@@ -1448,14 +1448,19 @@ ConstraintSystem::solve(SyntacticElementTarget &target,
       return None;
     }
 
-    case SolutionResult::Ambiguous:
-      // If salvaging produced an ambiguous result, it has already been
-      // diagnosed.
+    case SolutionResult::Ambiguous: {
       // If we have found an ambiguous solution in the first stage, salvaging
       // won't produce more solutions, so we can inform the solution callback
       // about the current ambiguous solutions straight away.
-      if (stage == 1 || Context.SolutionCallback) {
+      if (Context.SolutionCallback) {
         reportSolutionsToSolutionCallback(solution);
+        solution.markAsDiagnosed();
+        return None;
+      }
+
+      // If salvaging produced an ambiguous result, it has already been
+      // diagnosed.
+      if (stage == 1) {
         solution.markAsDiagnosed();
         return None;
       }
@@ -1471,6 +1476,7 @@ ConstraintSystem::solve(SyntacticElementTarget &target,
       }
 
       LLVM_FALLTHROUGH;
+    }
 
     case SolutionResult::UndiagnosedError:
       /// If we have a SolutionCallback, we are inspecting constraint system
