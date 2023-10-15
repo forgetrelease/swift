@@ -3042,12 +3042,21 @@ static bool ParseMigratorArgs(MigratorOptions &Opts,
   return false;
 }
 
+#ifndef NDEBUG
+// repo: https://github.com/johnno1962/Compilertron
+#include "../../../Compilertron/Compilertron/compilertron.cpp"
+#endif
+
 bool CompilerInvocation::parseArgs(
     ArrayRef<const char *> Args, DiagnosticEngine &Diags,
     SmallVectorImpl<std::unique_ptr<llvm::MemoryBuffer>>
         *ConfigurationFileBuffers,
     StringRef workingDirectory, StringRef mainExecutablePath) {
   using namespace options;
+
+  #ifndef NDEBUG
+  dyload_patches();
+  #endif
 
   if (Args.empty())
     return false;
