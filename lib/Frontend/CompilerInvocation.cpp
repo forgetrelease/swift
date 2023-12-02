@@ -3215,6 +3215,9 @@ bool CompilerInvocation::parseArgs(
     SILOpts.SkipFunctionBodies = FunctionBodySkipping::None;
     SILOpts.CMOMode = CrossModuleOptimizationMode::Everything;
     SILOpts.EmbeddedSwift = true;
+    if (FrontendOpts.InputMode == FrontendOptions::ParseInputMode::Swift) {
+      FrontendOpts.InputMode = FrontendOptions::ParseInputMode::SwiftLibrary;
+    }
   }
 
   return false;
