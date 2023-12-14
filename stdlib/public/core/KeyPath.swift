@@ -3533,7 +3533,7 @@ internal struct GetKeyPathClassAndInstanceSizeFromPattern
 
   mutating func finish() {
     sizeWithMaxSize = size
-    roundUpToPointerAlignment()
+    sizeWithMaxSize = MemoryLayout<Int>._roundingUpToAlignment(sizeWithMaxSize)
     sizeWithMaxSize &+= MemoryLayout<Int>.size
   }
 }
