@@ -342,8 +342,6 @@ public class KeyPath<Root, Value>: PartialKeyPath<Root> {
       }
     }
 
-    var currentType = rootType
-
     return withBuffer {
       var buffer = $0
 
@@ -381,6 +379,8 @@ public class KeyPath<Root, Value>: PartialKeyPath<Root> {
         currentValueBuffer.withMemoryRebound(to: Root.self) {
           $0.initializeElement(at: 0, to: root)
         }
+
+        var currentType = rootType
 
         while true {
           let (rawComponent, optNextType) = buffer.next()
