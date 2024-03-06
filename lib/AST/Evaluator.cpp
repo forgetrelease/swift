@@ -121,6 +121,7 @@ void Evaluator::diagnoseCycle(const ActiveRequest &request) {
 
     OS << "\n";
   }
+  assert(false); // FIXME(NCG): Temporary hack, remove before flight
 
   request.diagnoseCycle(diags);
   for (const auto &step : llvm::reverse(activeRequests)) {
