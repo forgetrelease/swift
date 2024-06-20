@@ -2029,6 +2029,7 @@ static bool shouldSerializeMember(Decl *D) {
   case DeclKind::Class:
   case DeclKind::Var:
   case DeclKind::Param:
+  case DeclKind::ExplicitCapture:
   case DeclKind::Func:
   case DeclKind::Accessor:
     return true;

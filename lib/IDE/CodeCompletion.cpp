@@ -1807,6 +1807,7 @@ void CodeCompletionCallbacksImpl::doneParsing(SourceFile *SrcFile) {
     if (AttTargetDK) {
       switch (*AttTargetDK) {
       case DeclKind::Var:
+      case DeclKind::ExplicitCapture:
         ExpectedCustomAttributeKinds |= CustomAttributeKind::GlobalActor;
         LLVM_FALLTHROUGH;
       case DeclKind::Param:
@@ -1823,6 +1824,7 @@ void CodeCompletionCallbacksImpl::doneParsing(SourceFile *SrcFile) {
 
       switch (*AttTargetDK) {
       case DeclKind::Var:
+      case DeclKind::ExplicitCapture:
       case DeclKind::Subscript:
         ExpectedCustomAttributeKinds |= CustomAttributeKind::VarMacro;
         break;
@@ -1858,7 +1860,9 @@ void CodeCompletionCallbacksImpl::doneParsing(SourceFile *SrcFile) {
     // - VarDecl: Property Wrappers.
     // - ParamDecl/VarDecl/FuncDecl: Result Builders.
     if (!AttTargetDK || *AttTargetDK == DeclKind::Var ||
-        *AttTargetDK == DeclKind::Param || *AttTargetDK == DeclKind::Func)
+        *AttTargetDK == DeclKind::Param ||
+        *AttTargetDK == DeclKind::ExplicitCapture ||
+        *AttTargetDK == DeclKind::Func)
       Lookup.getTypeCompletionsInDeclContext(
           P.Context.SourceMgr.getIDEInspectionTargetLoc());
 
