@@ -78,16 +78,18 @@ raw_ostream &llvm::operator<<(raw_ostream &OS, swift::ObjCSelector S) {
   return OS;
 }
 
-bool Identifier::isOperatorSlow() const {
-  StringRef data = str();
-  auto *s = reinterpret_cast<llvm::UTF8 const *>(data.begin()),
-  *end = reinterpret_cast<llvm::UTF8 const *>(data.end());
-  llvm::UTF32 codePoint;
-  llvm::ConversionResult res =
-    llvm::convertUTF8Sequence(&s, end, &codePoint, llvm::strictConversion);
-  assert(res == llvm::conversionOK && "invalid UTF-8 in identifier?!");
-  (void)res;
-  return !empty() && isOperatorStartCodePoint(codePoint);
+bool Identifier::isOperatorSlow() const { return Lexer::isOperator(str()); }
+
+bool Identifier::mustAlwaysBeEscaped() const {
+  bool mustEscape =
+      !isOperator() && !Lexer::isIdentifier(str()) &&
+      str().front() != '$'; // a property wrapper does not need to be escaped
+
+  // dollar sign must be escaped
+  if (str().equals("$")) {
+    mustEscape = true;
+  }
+  return mustEscape;
 }
 
 int Identifier::compare(Identifier other) const {

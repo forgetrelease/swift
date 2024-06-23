@@ -581,6 +581,12 @@ static bool isValidIdentifierStartCodePoint(uint32_t c) {
   return true;
 }
 
+static bool isValidIdentifierEscapedCodePoint(uint32_t c) {
+  // An escaped identifier can contain any character except for carriage
+  // return, line feed, or backtick.
+  return !(c == '\r' || c == '\n' || c == '`');
+}
+
 static bool advanceIf(char const *&ptr, char const *end,
                       bool (*predicate)(uint32_t)) {
   char const *next = ptr;
@@ -603,6 +609,10 @@ static bool advanceIfValidStartOfIdentifier(char const *&ptr,
 static bool advanceIfValidContinuationOfIdentifier(char const *&ptr,
                                                    char const *end) {
   return advanceIf(ptr, end, isValidIdentifierContinuationCodePoint);
+}
+
+static bool advanceIfValidEscapedIdentifier(char const *&ptr, char const *end) {
+  return advanceIf(ptr, end, isValidIdentifierEscapedCodePoint);
 }
 
 static bool advanceIfValidStartOfOperator(char const *&ptr,
@@ -2216,7 +2226,7 @@ bool Lexer::tryLexRegexLiteral(const char *TokStart) {
 }
 
 /// lexEscapedIdentifier:
-///   identifier ::= '`' identifier '`'
+///   identifier ::= '`' escaped-identifier '`'
 ///
 /// If it doesn't match this production, the leading ` is a punctuator.
 void Lexer::lexEscapedIdentifier() {
@@ -2227,21 +2237,14 @@ void Lexer::lexEscapedIdentifier() {
   // Check whether we have an identifier followed by another backtick, in which
   // case this is an escaped identifier.
   const char *IdentifierStart = CurPtr;
-  if (advanceIfValidStartOfIdentifier(CurPtr, BufferEnd)) {
-    // Keep continuing the identifier.
-    while (advanceIfValidContinuationOfIdentifier(CurPtr, BufferEnd));
+  while (advanceIfValidEscapedIdentifier(CurPtr, BufferEnd))
+    ;
 
-    // If we have the terminating "`", it's an escaped identifier.
-    if (*CurPtr == '`') {
-      ++CurPtr;
-      formEscapedIdentifierToken(Quote);
-      return;
-    }
-  }
-
-  // Special case; allow '`$`'.
-  if (Quote[1] == '$' && Quote[2] == '`') {
-    CurPtr = Quote + 3;
+  // If we have the terminating "`", it's an escaped identifier, unless it
+  // contained only operator characters.
+  if (*CurPtr == '`' &&
+      !isOperator(StringRef(IdentifierStart, CurPtr - IdentifierStart))) {
+    ++CurPtr;
     formEscapedIdentifierToken(Quote);
     return;
   }
