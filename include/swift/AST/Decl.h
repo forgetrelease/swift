@@ -6760,6 +6760,9 @@ class ParamDecl : public VarDecl {
 
     /// Whether or not this parameter is 'isolated'.
     IsIsolated = 1 << 2,
+    
+    /// Whether this parameter is `@_addressable`.
+    IsAddressable = 1 << 3,
 
     /// Whether or not this parameter is 'sending'.
     IsSending = 1 << 4,
@@ -7048,6 +7051,18 @@ public:
       addFlag(Flag::IsSending);
     else
       removeFlag(Flag::IsSending);
+  }
+
+  /// Whether or not this parameter is marked with '@_addressable'.
+  bool isAddressable() const {
+    return getOptions().contains(Flag::IsAddressable);
+  }
+  
+  void setAddressable(bool value = true) {
+    if (value)
+      addFlag(Flag::IsAddressable);
+    else
+      removeFlag(Flag::IsAddressable);
   }
 
   /// Whether or not this parameter is marked with '_const'.
