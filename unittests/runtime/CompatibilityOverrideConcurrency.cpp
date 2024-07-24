@@ -87,7 +87,7 @@ swift_task_enqueueGlobal_override(Job *job,
 SWIFT_CC(swift)
 static void
 swift_task_checkIsolated_override(SerialExecutorRef executor,
-                                      swift_task_checkIsolated_original original) {
+                                  swift_task_checkIsolated_original original) {
   Ran = true;
 }
 
@@ -104,6 +104,7 @@ static void swift_task_enqueueMainExecutor_override(
   Ran = true;
 }
 
+// FIXME: not used!? Missing hook?
 SWIFT_CC(swift)
 static void swift_task_startOnMainActor_override(AsyncTask* task) {
   Ran = true;
@@ -324,6 +325,13 @@ TEST_F(CompatibilityOverrideConcurrencyTest, test_swift_task_cancel_group_child_
 
 TEST_F(CompatibilityOverrideConcurrencyTest, test_swift_task_escalate) {
   swift_task_escalate(nullptr, {});
+}
+
+
+TEST_F(CompatibilityOverrideConcurrencyTest, test_swift_task_checkOnExpectedExecutorImpl) {
+  swift_task_checkOnExpectedExecutor(SerialExecutorRef::generic(),
+                                     /*message=*/nullptr, 0,
+                                     nullptr, ExecutorCheckFlags());
 }
 
 TEST_F(CompatibilityOverrideConcurrencyTest, test_swift_startOnMainActorImpl) {
