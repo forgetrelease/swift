@@ -187,14 +187,14 @@ static void checkInvertibleConformanceCommon(DeclContext *dc,
 
         static_assert((unsigned)RequirementKind::LAST_KIND == 4,
                       "update %select in diagnostic!");
-        if (illegalSecondType) {
-          auto t = ctx.Diags.diagnose(conformanceLoc,
-                             diag::inverse_cannot_be_conditional_on_requirement,
-                             thisProto,
-                             req.getFirstType(),
-                             static_cast<unsigned>(req.getKind()),
-                             illegalSecondType);
-        }
+        // if (illegalSecondType) {
+        //   auto t = ctx.Diags.diagnose(conformanceLoc,
+        //                      diag::inverse_cannot_be_conditional_on_requirement,
+        //                      thisProto,
+        //                      req.getFirstType(),
+        //                      static_cast<unsigned>(req.getKind()),
+        //                      illegalSecondType);
+        // }
       }
     }
   }
