@@ -19,6 +19,8 @@
 #include "swift/AST/DiagnosticsSema.h"
 #include "swift/AST/FileSystem.h"
 #include "swift/AST/Module.h"
+#include "swift/AST/SearchPathOptions.h"
+#include "swift/Basic/Assertions.h"
 #include "swift/Basic/Platform.h"
 #include "swift/Basic/StringExtras.h"
 #include "swift/Frontend/CachingUtils.h"
@@ -1401,7 +1403,7 @@ ModuleInterfaceCheckerImpl::getCompiledModuleCandidatesForInterface(
 
   auto validateModule = [&](StringRef modulePath) {
     // Legacy behavior do not validate module.
-    if (Ctx.SearchPathOpts.NoScannerModuleValidation)
+    if (!Ctx.SearchPathOpts.ScannerModuleValidation)
       return true;
 
     // If we picked the other module already, no need to validate this one since
@@ -1696,6 +1698,39 @@ void InterfaceSubContextDelegateImpl::inheritOptionsForBuildingInterface(
     genericSubInvocation.setPlatformAvailabilityInheritanceMapPath(*SearchPathOpts.PlatformAvailabilityInheritanceMapPath);
   }
 
+  for (auto &entry : SearchPathOpts.PluginSearchOpts) {
+    switch (entry.getKind()) {
+    case PluginSearchOption::Kind::LoadPluginLibrary: {
+      auto &val = entry.get<PluginSearchOption::LoadPluginLibrary>();
+      GenericArgs.push_back("-load-plugin-library");
+      GenericArgs.push_back(ArgSaver.save(val.LibraryPath));
+      break;
+    }
+    case PluginSearchOption::Kind::LoadPluginExecutable: {
+      auto &val = entry.get<PluginSearchOption::LoadPluginExecutable>();
+      for (auto &moduleName : val.ModuleNames) {
+        GenericArgs.push_back("-load-plugin-executable");
+        GenericArgs.push_back(
+            ArgSaver.save(val.ExecutablePath + "#" + moduleName));
+      }
+      break;
+    }
+    case PluginSearchOption::Kind::PluginPath: {
+      auto &val = entry.get<PluginSearchOption::PluginPath>();
+      GenericArgs.push_back("-plugin-path");
+      GenericArgs.push_back(ArgSaver.save(val.SearchPath));
+      break;
+    }
+    case PluginSearchOption::Kind::ExternalPluginPath: {
+      auto &val = entry.get<PluginSearchOption::ExternalPluginPath>();
+      GenericArgs.push_back("-external-plugin-path");
+      GenericArgs.push_back(
+          ArgSaver.save(val.SearchPath + "#" + val.ServerPath));
+      break;
+    }
+    }
+  }
+
   genericSubInvocation.getFrontendOptions().InputMode
       = FrontendOptions::ParseInputMode::SwiftModuleInterface;
   if (!SearchPathOpts.RuntimeResourcePath.empty()) {
@@ -1887,8 +1922,7 @@ InterfaceSubContextDelegateImpl::InterfaceSubContextDelegateImpl(
       searchPathOpts.PluginSearchOpts;
 
   // Get module loading behavior options.
-  genericSubInvocation.getSearchPathOptions().NoScannerModuleValidation =
-      searchPathOpts.NoScannerModuleValidation;
+  genericSubInvocation.getSearchPathOptions().ScannerModuleValidation = searchPathOpts.ScannerModuleValidation;
   genericSubInvocation.getSearchPathOptions().ModuleLoadMode =
       searchPathOpts.ModuleLoadMode;
 
@@ -2037,6 +2071,8 @@ InterfaceSubContextDelegateImpl::getCacheHash(StringRef useInterfacePath,
   auto normalizedTargetTriple =
       getTargetSpecificModuleTriple(genericSubInvocation.getLangOptions().Target);
   std::string sdkBuildVersion = getSDKBuildVersion(sdkPath);
+  const auto ExtraArgs = genericSubInvocation.getClangImporterOptions()
+                             .getReducedExtraArgsForSwiftModuleDependency();
 
   llvm::hash_code H = hash_combine(
       // Start with the compiler version (which will be either tag names or
@@ -2078,6 +2114,10 @@ InterfaceSubContextDelegateImpl::getCacheHash(StringRef useInterfacePath,
       // correctly load the dependencies.
       genericSubInvocation.getCASOptions().getModuleScanningHashComponents(),
 
+      // Clang ExtraArgs that affects how clang types are imported into swift
+      // module.
+      llvm::hash_combine_range(ExtraArgs.begin(), ExtraArgs.end()),
+
       // Whether or not OSSA modules are enabled.
       //
       // If OSSA modules are enabled, we use a separate namespace of modules to
@@ -2095,15 +2135,18 @@ InterfaceSubContextDelegateImpl::runInSubContext(StringRef moduleName,
                                                  StringRef outputPath,
                                                  SourceLoc diagLoc,
     llvm::function_ref<std::error_code(ASTContext&, ModuleDecl*, ArrayRef<StringRef>,
-                            ArrayRef<StringRef>, StringRef)> action) {
+                          ArrayRef<StringRef>, StringRef, StringRef)> action) {
   return runInSubCompilerInstance(moduleName, interfacePath, sdkPath, outputPath,
                                   diagLoc, /*silenceErrors=*/false,
                                   [&](SubCompilerInstanceInfo &info){
+    std::string UserModuleVer = info.Instance->getInvocation().getFrontendOptions()
+      .UserModuleVersion.getAsString();
     return action(info.Instance->getASTContext(),
                   info.Instance->getMainModule(),
                   info.BuildArguments,
                   info.ExtraPCMArgs,
-                  info.Hash);
+                  info.Hash,
+                  UserModuleVer);
   });
 }
 
@@ -2385,7 +2428,7 @@ std::error_code ExplicitSwiftModuleLoader::findModuleFilesInDirectory(
 }
 
 bool ExplicitSwiftModuleLoader::canImportModule(
-    ImportPath::Module path, ModuleVersionInfo *versionInfo,
+    ImportPath::Module path, SourceLoc loc, ModuleVersionInfo *versionInfo,
     bool isTestableDependencyLookup) {
   // FIXME: Swift submodules?
   if (path.hasSubmodule())
@@ -2411,7 +2454,7 @@ bool ExplicitSwiftModuleLoader::canImportModule(
   auto &fs = *Ctx.SourceMgr.getFileSystem();
   auto moduleBuf = fs.getBufferForFile(it->second.modulePath);
   if (!moduleBuf) {
-    Ctx.Diags.diagnose(SourceLoc(), diag::error_opening_explicit_module_file,
+    Ctx.Diags.diagnose(loc, diag::error_opening_explicit_module_file,
                        it->second.modulePath);
     return false;
   }
@@ -2422,8 +2465,7 @@ bool ExplicitSwiftModuleLoader::canImportModule(
     if (auto forwardingModule = ForwardingModule::load(**moduleBuf)) {
       moduleBuf = fs.getBufferForFile(forwardingModule->underlyingModulePath);
       if (!moduleBuf) {
-        Ctx.Diags.diagnose(SourceLoc(),
-                           diag::error_opening_explicit_module_file,
+        Ctx.Diags.diagnose(loc, diag::error_opening_explicit_module_file,
                            forwardingModule->underlyingModulePath);
         return false;
       }
@@ -2736,7 +2778,7 @@ std::error_code ExplicitCASModuleLoader::findModuleFilesInDirectory(
 }
 
 bool ExplicitCASModuleLoader::canImportModule(
-    ImportPath::Module path, ModuleVersionInfo *versionInfo,
+    ImportPath::Module path, SourceLoc loc, ModuleVersionInfo *versionInfo,
     bool isTestableDependencyLookup) {
   // FIXME: Swift submodules?
   if (path.hasSubmodule())
@@ -2765,12 +2807,11 @@ bool ExplicitCASModuleLoader::canImportModule(
                                 : it->second.modulePath;
   auto moduleBuf = Impl.loadFileBuffer(moduleCASID, it->second.modulePath);
   if (!moduleBuf) {
-    Ctx.Diags.diagnose(SourceLoc(), diag::error_cas,
-                       toString(moduleBuf.takeError()));
+    Ctx.Diags.diagnose(loc, diag::error_cas, toString(moduleBuf.takeError()));
     return false;
   }
   if (!*moduleBuf) {
-    Ctx.Diags.diagnose(SourceLoc(), diag::error_opening_explicit_module_file,
+    Ctx.Diags.diagnose(loc, diag::error_opening_explicit_module_file,
                        it->second.modulePath);
     return false;
   }

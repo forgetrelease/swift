@@ -28,6 +28,7 @@
 #include "swift/AST/SemanticAttrs.h"
 #include "swift/AST/TypeMemberVisitor.h"
 #include "swift/AST/Types.h"
+#include "swift/Basic/Assertions.h"
 #include "swift/Basic/Defer.h"
 #include "swift/ClangImporter/ClangModule.h"
 #include "swift/IRGen/Linking.h"
@@ -780,6 +781,8 @@ static llvm::Value *stackPromote(IRGenFunction &IGF,
     return nullptr;
   if (!FieldLayout.isFixedLayout())
     return nullptr;
+  if (!FieldLayout.isFixedSize())
+    return nullptr;
 
   // Calculate the total size needed.
   // The first part is the size of the class itself.
@@ -1398,6 +1401,12 @@ namespace {
       }
 
       auto dataPtr = emitROData(ForMetaClass, DoesNotHaveUpdateCallback);
+
+      // Record the ro-data globals if this is a pre-specialized class.
+      if (specializedGenericType) {
+        IGM.addGenericROData(dataPtr);
+      }
+
       dataPtr = llvm::ConstantExpr::getPtrToInt(dataPtr, IGM.IntPtrTy);
 
       llvm::Constant *fields[] = {
@@ -2681,7 +2690,14 @@ static llvm::Constant *doEmitClassPrivateData(
   }
 
   // Then build the class RO-data.
-  return builder.emitROData(ForClass, hasUpdater);
+  auto res = builder.emitROData(ForClass, hasUpdater);
+
+  // Record the ro-data globals if this is a pre-specialized class.
+  if (classUnion.isa<std::pair<ClassDecl*, CanType>>()) {
+    IGM.addGenericROData(res);
+  }
+
+  return res;
 }
 
 llvm::Constant *irgen::emitSpecializedGenericClassPrivateData(

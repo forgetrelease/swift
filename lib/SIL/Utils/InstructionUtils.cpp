@@ -14,6 +14,7 @@
 #include "swift/SIL/InstructionUtils.h"
 #include "swift/SIL/MemAccessUtils.h"
 #include "swift/AST/SubstitutionMap.h"
+#include "swift/Basic/Assertions.h"
 #include "swift/Basic/Defer.h"
 #include "swift/Basic/NullablePtr.h"
 #include "swift/Basic/STLExtras.h"
@@ -244,6 +245,16 @@ SILValue swift::stripValueProjections(SILValue V) {
   while (true) {
     V = stripSinglePredecessorArgs(V);
     if (!Projection::isObjectProjection(V))
+      return V;
+    V = cast<SingleValueInstruction>(V)->getOperand(0);
+  }
+}
+
+SILValue swift::lookThroughAddressAndValueProjections(SILValue V) {
+  while (true) {
+    V = stripSinglePredecessorArgs(V);
+    if (!Projection::isObjectProjection(V) &&
+        !Projection::isAddressProjection(V))
       return V;
     V = cast<SingleValueInstruction>(V)->getOperand(0);
   }
@@ -618,7 +629,7 @@ RuntimeEffect swift::getRuntimeEffect(SILInstruction *inst, SILType &impactType)
   case SILInstructionKind::StructElementAddrInst:
   case SILInstructionKind::IndexAddrInst:
     // TODO: hasArchetype() ?
-    if (!inst->getOperand(0)->getType().isLoadable(*inst->getFunction())) {
+    if (!inst->getOperand(0)->getType().isFixedABI(*inst->getFunction())) {
       impactType = inst->getOperand(0)->getType();
       return RuntimeEffect::MetaData;
     }
@@ -717,8 +728,7 @@ RuntimeEffect swift::getRuntimeEffect(SILInstruction *inst, SILType &impactType)
   case SILInstructionKind::AllocStackInst:
   case SILInstructionKind::AllocVectorInst:
   case SILInstructionKind::ProjectBoxInst:
-    if (!cast<SingleValueInstruction>(inst)->getType().
-          isLoadable(*inst->getFunction())) {
+    if (cast<SingleValueInstruction>(inst)->getType().hasArchetype()) {
       impactType = cast<SingleValueInstruction>(inst)->getType();
       return RuntimeEffect::MetaData;
     }
@@ -1017,7 +1027,7 @@ RuntimeEffect swift::getRuntimeEffect(SILInstruction *inst, SILType &impactType)
     case BuiltinValueKind::AtomicLoad:
     case BuiltinValueKind::AtomicStore:
     case BuiltinValueKind::AtomicRMW:
-      return RuntimeEffect::Locking;
+      return RuntimeEffect::NoEffect;
     case BuiltinValueKind::DestroyArray:
       return RuntimeEffect::Releasing;
     case BuiltinValueKind::CopyArray:

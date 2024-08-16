@@ -23,6 +23,7 @@
 #include "swift/AST/AccessScope.h"
 #include "swift/AST/Attr.h"
 #include "swift/AST/CaptureInfo.h"
+#include "swift/AST/ConformanceLookup.h"
 #include "swift/AST/DeclExportabilityVisitor.h"
 #include "swift/AST/DiagnosticEngine.h"
 #include "swift/AST/DiagnosticsSema.h"
@@ -49,6 +50,7 @@
 #include "swift/AST/SwiftNameTranslation.h"
 #include "swift/AST/TypeCheckRequests.h"
 #include "swift/AST/TypeLoc.h"
+#include "swift/Basic/Assertions.h"
 #include "swift/Basic/Defer.h"
 #include "swift/Basic/Range.h"
 #include "swift/Basic/Statistic.h"
@@ -564,8 +566,9 @@ Decl::getIntroducedOSVersion(PlatformKind Kind) const {
 }
 
 std::optional<llvm::VersionTuple>
-Decl::getBackDeployedBeforeOSVersion(ASTContext &Ctx) const {
-  if (auto *attr = getAttrs().getBackDeployed(Ctx)) {
+Decl::getBackDeployedBeforeOSVersion(ASTContext &Ctx,
+                                     bool forTargetVariant) const {
+  if (auto *attr = getAttrs().getBackDeployed(Ctx, forTargetVariant)) {
     auto version = attr->Version;
     StringRef ignoredPlatformString;
     AvailabilityInference::updateBeforePlatformForFallback(
@@ -581,13 +584,22 @@ Decl::getBackDeployedBeforeOSVersion(ASTContext &Ctx) const {
 
   // Accessors may inherit `@backDeployed`.
   if (auto *AD = dyn_cast<AccessorDecl>(this))
-    return AD->getStorage()->getBackDeployedBeforeOSVersion(Ctx);
+    return AD->getStorage()->getBackDeployedBeforeOSVersion(Ctx,
+                                                            forTargetVariant);
 
   return std::nullopt;
 }
 
 bool Decl::isBackDeployed(ASTContext &Ctx) const {
-  return getBackDeployedBeforeOSVersion(Ctx) != std::nullopt;
+  if (getBackDeployedBeforeOSVersion(Ctx))
+    return true;
+
+  if (Ctx.LangOpts.TargetVariant) {
+    if (getBackDeployedBeforeOSVersion(Ctx, /*forTargetVariant=*/true))
+      return true;
+  }
+
+  return false;
 }
 
 bool Decl::hasBackDeployedAttr() const {
@@ -1768,6 +1780,8 @@ bool ExtensionDecl::hasValidParent() const {
   return getDeclContext()->canBeParentOfExtension();
 }
 
+/// Does the extension's generic signature impose additional generic requirements
+/// not stated on the extended nominal type itself?
 bool ExtensionDecl::isConstrainedExtension() const {
   auto nominal = getExtendedNominal();
   if (!nominal)
@@ -1786,12 +1800,26 @@ bool ExtensionDecl::isConstrainedExtension() const {
   return !typeSig->isEqual(extSig);
 }
 
+/// Is the extension written as an unconstrained extension? This is not the same
+/// as isConstrainedExtension() in the case where the extended nominal type has
+/// inverse requirements, because an extension of such a type introduces default
+/// conformance requirements unless they're suppressed on the extension.
+///
+/// enum Optional<Wrapped> where Wrapped: ~Copyable {}
+///
+/// extension Optional {}
+///   --> isConstrainedExtension(): true
+///   --> isWrittenWithConstraints(): false
+///
+/// extension Optional where Wrapped: ~Copyable {}
+///   --> isConstrainedExtension(): false
+///   --> isWrittenWithConstraints(): true
 bool ExtensionDecl::isWrittenWithConstraints() const {
   auto nominal = getExtendedNominal();
   if (!nominal)
     return false;
 
-  // If there's no generic signature, then it's written without constraints.
+  // If there's no generic signature, then it's unconstrained.
   CanGenericSignature extSig = getGenericSignature().getCanonicalSignature();
   if (!extSig)
     return false;
@@ -1808,30 +1836,18 @@ bool ExtensionDecl::isWrittenWithConstraints() const {
   SmallVector<InverseRequirement, 2> typeInverseReqs;
   typeSig->getRequirementsWithInverses(typeReqs, typeInverseReqs);
 
-  // If the (non-inverse) requirements are different between the extension and
-  // the original type, it's written with constraints. Note that
-  // the extension can only add requirements, so we need only check the size
-  // (not the specific requirements).
-  if (extReqs.size() > typeReqs.size()) {
+  // If the non-inverse requirements are different between the extension and
+  // the original type, it's written with constraints.
+  if (extReqs != typeReqs)
     return true;
-  }
 
-  assert(extReqs.size() == typeReqs.size());
+  // If the extension has inverse requirements, then it's written with
+  // constraints.
+  if (!extInverseReqs.empty())
+    return true;
 
-  // If the type has no inverse requirements, there are no extra constraints
-  // to write.
-  if (typeInverseReqs.empty()) {
-    return false;
-  }
-
-  // If the extension has no inverse requirements, then there are no constraints
-  // that need to be written down.
-  if (extInverseReqs.empty()) {
-    return false;
-  }
-
-  // We have inverses that need to be written out.
-  return true;
+  // Otherwise, the extension is written as an unconstrained extension.
+  return false;
 }
 
 bool ExtensionDecl::isInSameDefiningModule() const {
@@ -1885,6 +1901,30 @@ Type ExtensionDecl::getExtendedType() const {
           Type()))
     return type;
   return ErrorType::get(ctx);
+}
+
+bool ExtensionDecl::isAddingConformanceToInvertible() const {
+  const unsigned numEntries = getInherited().size();
+  for (unsigned i = 0; i < numEntries; ++i) {
+    InheritedTypeRequest request{this, i, TypeResolutionStage::Structural};
+    auto result = evaluateOrDefault(getASTContext().evaluator, request,
+                                    InheritedTypeResult::forDefault());
+    Type inheritedTy;
+    switch (result) {
+    case InheritedTypeResult::Inherited:
+      inheritedTy = result.getInheritedType();
+      break;
+    case InheritedTypeResult::Suppressed:
+    case InheritedTypeResult::Default:
+      continue;
+    }
+
+    if (inheritedTy)
+      if (auto kp = inheritedTy->getKnownProtocol())
+        if (getInvertibleProtocolKind(*kp))
+          return true;
+  }
+  return false;
 }
 
 bool Decl::isObjCImplementation() const {
@@ -2314,7 +2354,7 @@ bool VarDecl::isLayoutExposedToClients() const {
   auto nominalAccess =
     parent->getFormalAccessScope(/*useDC=*/nullptr,
                                  /*treatUsableFromInlineAsPublic=*/true);
-  if (!nominalAccess.isPublicOrPackage()) return false;
+  if (!nominalAccess.isPublic()) return false;
 
   if (!parent->getAttrs().hasAttribute<FrozenAttr>() &&
       !parent->getAttrs().hasAttribute<FixedLayoutAttr>())
@@ -3053,9 +3093,6 @@ bool AbstractStorageDecl::isResilient(ModuleDecl *M,
     return isResilient();
   case ResilienceExpansion::Maximal:
     if (M == getModuleContext())
-      return false;
-    // Access non-resiliently if package optimization is enabled
-    if (bypassResilienceInPackage(M))
       return false;
     return isResilient();
   }
@@ -4175,6 +4212,21 @@ bool ValueDecl::isUsableFromInline() const {
   return false;
 }
 
+bool ValueDecl::isInterfacePackageEffectivelyPublic() const {
+  // If a package decl has a @usableFromInline (or other inlinable)
+  // attribute, and is defined in a module built from interface, it
+  // can be referenced by another module that imports it even though
+  // the defining interface module does not have package-name (such
+  // as public or private interface); in such case, the decl is treated
+  // as public and access checks in sema are skipped.
+  // We might need to add another check here to ensure the interface
+  // was part of the same package before the package-name was removed.
+  return getFormalAccess() == AccessLevel::Package &&
+         isUsableFromInline() &&
+         getModuleContext()->getPackageName().empty() &&
+         getModuleContext()->isBuiltFromInterface();
+}
+
 bool ValueDecl::shouldHideFromEditor() const {
   // Hide private stdlib declarations.
   if (isPrivateStdlibDecl(/*treatNonBuiltinProtocolsAsPublic*/ false) ||
@@ -4266,6 +4318,9 @@ static AccessLevel getAdjustedFormalAccess(const ValueDecl *VD,
   // access level of the current declaration to be as open as possible.
   if (useDC && VD->getASTContext().isAccessControlDisabled())
     return getMaximallyOpenAccessFor(VD);
+
+  if (VD->isInterfacePackageEffectivelyPublic())
+    return AccessLevel::Public;
 
   if (treatUsableFromInlineAsPublic &&
       access < AccessLevel::Public &&
@@ -4370,23 +4425,14 @@ bool ValueDecl::hasOpenAccess(const DeclContext *useDC) const {
 }
 
 bool ValueDecl::bypassResilienceInPackage(ModuleDecl *accessingModule) const {
+  // If the defining module is built with package-cmo, bypass
+  // resilient access from the use site that belongs to a module
+  // in the same package.
   auto declModule = getModuleContext();
-  if (declModule->inSamePackage(accessingModule) &&
-      declModule->allowNonResilientAccess()) {
-    // If the defining module is built with package-cmo,
-    // allow direct access from the use site that belongs
-    // to accessingModule (client module).
-    if (declModule->isResilient() &&
-        declModule->serializePackageEnabled())
-      return true;
-
-    // If not, check if the client can still opt in to
-    // have a direct access to this decl from the use
-    // site with a flag.
-    // FIXME: serialize this flag to Module and get it via accessingModule.
-    return getASTContext().LangOpts.EnableBypassResilienceInPackage;
-  }
-  return false;
+  return declModule->inSamePackage(accessingModule) &&
+         declModule->isResilient() &&
+         declModule->allowNonResilientAccess() &&
+         declModule->serializePackageEnabled();
 }
 
 /// Given the formal access level for using \p VD, compute the scope where
@@ -4458,6 +4504,8 @@ getAccessScopeForFormalAccess(const ValueDecl *VD,
   case AccessLevel::Package: {
     auto pkg = resultDC->getPackageContext(/*lookupIfNotCurrent*/ true);
     if (!pkg) {
+      if (VD->isInterfacePackageEffectivelyPublic())
+        return AccessScope::getPublic();
       // Instead of reporting and failing early, return the scope of resultDC to
       // allow continuation (should still non-zero exit later if in script mode)
       return AccessScope(resultDC);
@@ -4593,6 +4641,9 @@ static bool checkAccess(const DeclContext *useDC, const ValueDecl *VD,
   if (VD->getASTContext().isAccessControlDisabled())
     return true;
 
+  if (VD->isInterfacePackageEffectivelyPublic())
+    return true;
+
   auto access = getAccessLevel();
   auto *sourceDC = VD->getDeclContext();
 
@@ -4683,7 +4734,7 @@ bool ValueDecl::isMoreVisibleThan(ValueDecl *other) const {
   else if (scope.isPackage())
     return !otherScope.isPublicOrPackage();
   else if (scope.isInternal())
-    return !otherScope.isPublicOrPackage() && !otherScope.isInternal();
+    return !otherScope.isPublic() && !otherScope.isInternal();
   else
     return false;
 }
@@ -5102,8 +5153,8 @@ NominalTypeDecl::canConformTo(InvertibleProtocolKind ip) const {
   Type selfTy = getDeclaredInterfaceType();
   assert(selfTy);
 
-  auto conformance = getModuleContext()->lookupConformance(selfTy, proto,
-      /*allowMissing=*/false);
+  auto conformance = swift::lookupConformance(selfTy, proto,
+                                              /*allowMissing=*/false);
 
   if (conformance.isInvalid())
     return TypeDecl::CanBeInvertible::Never;
@@ -6532,6 +6583,11 @@ bool EnumDecl::hasOnlyCasesWithoutAssociatedValues() const {
   return !hasAssociatedValues;
 }
 
+bool EnumDecl::treatAsExhaustiveForDiags(const DeclContext *useDC) const {
+  return isFormallyExhaustive(useDC) ||
+         (useDC && getModuleContext()->inSamePackage(useDC->getParentModule()));
+}
+
 bool EnumDecl::isFormallyExhaustive(const DeclContext *useDC) const {
   // Enums explicitly marked frozen are exhaustive.
   if (getAttrs().hasAttribute<FrozenAttr>())
@@ -6549,13 +6605,9 @@ bool EnumDecl::isFormallyExhaustive(const DeclContext *useDC) const {
     return true;
 
   // Non-public, non-versioned enums are always exhaustive.
-  AccessScope accessScope = getFormalAccessScope(/*useDC*/nullptr,
-                                                 /*respectVersioned*/true);
-  // Both public and package enums should behave the same unless
-  // package enum is optimized with bypassing resilience checks.
+  AccessScope accessScope = getFormalAccessScope(/*useDC*/ nullptr,
+                                                 /*respectVersioned*/ true);
   if (!accessScope.isPublicOrPackage())
-    return true;
-  if (useDC && bypassResilienceInPackage(useDC->getParentModule()))
     return true;
 
   // All other checks are use-site specific; with no further information, the
@@ -6588,11 +6640,13 @@ bool EnumDecl::isEffectivelyExhaustive(ModuleDecl *M,
   if (isObjC())
     return false;
 
-  // Otherwise, the only non-exhaustive cases are those that don't have a fixed
-  // layout.
-  assert(isFormallyExhaustive(M) == !isResilient(M,ResilienceExpansion::Maximal)
-         && "ignoring the effects of @inlinable, @testable, and @objc, "
-            "these should match up");
+  // Otherwise, the only non-exhaustive enums are those that don't have
+  // a fixed layout; however, they are treated as exhaustive if package
+  // optimization is enabled.
+  assert((isFormallyExhaustive(M) || bypassResilienceInPackage(M)) ==
+             !isResilient(M, ResilienceExpansion::Maximal) &&
+         "ignoring the effects of @inlinable, @testable, and @objc, "
+         "these should match up");
   return !isResilient(M, expansion);
 }
       
@@ -6620,13 +6674,14 @@ ProtocolDecl::ProtocolDecl(DeclContext *DC, SourceLoc ProtocolLoc,
   Bits.ProtocolDecl.RequiresClass = false;
   Bits.ProtocolDecl.ExistentialConformsToSelfValid = false;
   Bits.ProtocolDecl.ExistentialConformsToSelf = false;
-  Bits.ProtocolDecl.InheritedProtocolsValid = 0;
+  Bits.ProtocolDecl.InheritedProtocolsValid = false;
+  Bits.ProtocolDecl.AllInheritedProtocolsValid = false;
   Bits.ProtocolDecl.HasMissingRequirements = false;
   Bits.ProtocolDecl.KnownProtocol = 0;
-  Bits.ProtocolDecl.HasAssociatedTypes = 0;
-  Bits.ProtocolDecl.HasLazyAssociatedTypes = 0;
-  Bits.ProtocolDecl.HasRequirementSignature = 0;
-  Bits.ProtocolDecl.HasLazyRequirementSignature = 0;
+  Bits.ProtocolDecl.HasAssociatedTypes = false;
+  Bits.ProtocolDecl.HasLazyAssociatedTypes = false;
+  Bits.ProtocolDecl.HasRequirementSignature = false;
+  Bits.ProtocolDecl.HasLazyRequirementSignature = false;
   Bits.ProtocolDecl.ProtocolRequirementsValid = false;
   setTrailingWhereClause(TrailingWhere);
 }
@@ -6660,6 +6715,11 @@ ArrayRef<ProtocolDecl *> ProtocolDecl::getInheritedProtocols() const {
 }
 
 ArrayRef<ProtocolDecl *> ProtocolDecl::getAllInheritedProtocols() const {
+  // Avoid evaluator overhead because we call this from Symbol::compare()
+  // in the Requirement Machine.
+  if (Bits.ProtocolDecl.AllInheritedProtocolsValid)
+    return AllInheritedProtocols;
+
   auto *mutThis = const_cast<ProtocolDecl *>(this);
   return evaluateOrDefault(getASTContext().evaluator,
                            AllInheritedProtocolsRequest{mutThis},
@@ -7377,6 +7437,8 @@ VarDecl::VarDecl(DeclKind kind, bool isStatic, VarDecl::Introducer introducer,
   Bits.VarDecl.IsLazyStorageProperty = false;
   Bits.VarDecl.IsPropertyWrapperBackingProperty = false;
   Bits.VarDecl.IsTopLevelGlobal = false;
+  Bits.VarDecl.NoAttachedPropertyWrappers = false;
+  Bits.VarDecl.NoPropertyWrapperAuxiliaryVariables = false;
 }
 
 Type VarDecl::getTypeInContext() const {
@@ -10258,8 +10320,8 @@ void AbstractFunctionDecl::addDerivativeFunctionConfiguration(
   DerivativeFunctionConfigs->insert(config);
 }
 
-std::optional<LifetimeDependenceInfo>
-AbstractFunctionDecl::getLifetimeDependenceInfo() const {
+std::optional<llvm::ArrayRef<LifetimeDependenceInfo>>
+AbstractFunctionDecl::getLifetimeDependencies() const {
   if (!isa<FuncDecl>(this) && !isa<ConstructorDecl>(this)) {
     return std::nullopt;
   }
@@ -10339,8 +10401,7 @@ FuncDecl *FuncDecl::create(ASTContext &Context, SourceLoc StaticLoc,
       ClangNode());
   FD->setParameters(BodyParams);
   FD->FnRetType = TypeLoc(ResultTyR);
-  if (llvm::isa_and_nonnull<TransferringTypeRepr>(ResultTyR) ||
-      llvm::isa_and_nonnull<SendingTypeRepr>(ResultTyR))
+  if (llvm::isa_and_nonnull<SendingTypeRepr>(ResultTyR))
     FD->setSendingResult();
   return FD;
 }
@@ -10761,7 +10822,7 @@ bool ConstructorDecl::isObjCZeroParameterWithLongSelector() const {
 }
 
 bool ConstructorDecl::hasLifetimeDependentReturn() const {
-  return isa_and_nonnull<LifetimeDependentReturnTypeRepr>(getResultTypeRepr());
+  return isa_and_nonnull<LifetimeDependentTypeRepr>(getResultTypeRepr());
 }
 
 DestructorDecl::DestructorDecl(SourceLoc DestructorLoc, DeclContext *Parent)
@@ -11261,10 +11322,15 @@ bool VarDecl::isSelfParamCaptureIsolated() const {
 }
 
 ActorIsolation swift::getActorIsolation(ValueDecl *value) {
+  return getInferredActorIsolation(value).isolation;
+}
+
+InferredActorIsolation
+swift::getInferredActorIsolation(ValueDecl *value) {
   auto &ctx = value->getASTContext();
   return evaluateOrDefault(
       ctx.evaluator, ActorIsolationRequest{value},
-      ActorIsolation::forUnspecified());
+      InferredActorIsolation::forUnspecified());
 }
 
 ActorIsolation swift::getActorIsolationOfContext(
@@ -11604,9 +11670,7 @@ ActorIsolation::forActorInstanceParameter(Expr *actor,
     auto baseType =
         memberRef->getBase()->getType()->getMetatypeInstanceType();
     if (auto globalActor = ctx.getProtocol(KnownProtocolKind::GlobalActor)) {
-      auto *dc = declRef.getDecl()->getDeclContext();
-      auto *module = dc->getParentModule();
-      auto conformance = module->checkConformance(baseType, globalActor);
+      auto conformance = checkConformance(baseType, globalActor);
       if (conformance &&
           conformance.getWitnessByName(baseType, ctx.Id_shared) == declRef) {
         return ActorIsolation::forGlobalActor(baseType);

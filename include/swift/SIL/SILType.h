@@ -366,6 +366,9 @@ public:
   /// address-only. This is the opposite of isLoadable.
   bool isAddressOnly(const SILFunction &F) const;
 
+  /// For details see the comment of `IsFixedABI_t`.
+  bool isFixedABI(const SILFunction &F) const;
+
   /// True if the underlying AST type is trivial, meaning it is loadable and can
   /// be trivially copied, moved or destroyed. Returns false for address types
   /// even though they are technically trivial.
@@ -783,10 +786,6 @@ public:
   /// representation. Class existentials do not always qualify.
   bool isHeapObjectReferenceType() const;
 
-  /// Returns true if this SILType is an aggregate that contains \p Ty
-  bool aggregateContainsRecord(SILType Ty, SILModule &SILMod,
-                               TypeExpansionContext context) const;
-
   /// Returns true if this SILType is an aggregate with unreferenceable storage,
   /// meaning it cannot be fully destructured in SIL.
   bool aggregateHasUnreferenceableStorage() const;
@@ -868,7 +867,15 @@ public:
   ///
   /// DISCUSSION: This is separate from removingMoveOnlyWrapper since this API
   /// requires a SILFunction * and is specialized.
-  SILType removingMoveOnlyWrapperToBoxedType(const SILFunction *fn);
+  SILType removingMoveOnlyWrapperFromBoxedType(const SILFunction *fn);
+
+  /// Whether there's a direct wrapper or a wrapper inside a box.
+  bool hasAnyMoveOnlyWrapping(const SILFunction *fn) {
+    return isMoveOnlyWrapped() || isBoxedMoveOnlyWrappedType(fn);
+  }
+
+  /// Removes a direct wrapper from a type or a wrapper from a type in a box.
+  SILType removingAnyMoveOnlyWrapping(const SILFunction *fn);
 
   /// Returns a SILType with any archetypes mapped out of context.
   SILType mapTypeOutOfContext() const;
@@ -933,7 +940,7 @@ public:
     return getSILBoxFieldType(fn).isMoveOnlyWrapped();
   }
 
-  SILType getInstanceTypeOfMetatype(SILFunction *function) const;
+  SILType getLoweredInstanceTypeOfMetatype(SILFunction *function) const;
 
   MetatypeRepresentation getRepresentationOfMetatype(SILFunction *function) const;
 

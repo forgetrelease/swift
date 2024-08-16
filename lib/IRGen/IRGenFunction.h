@@ -102,7 +102,7 @@ public:
   Explosion collectParameters();
   void emitScalarReturn(SILType returnResultType, SILType funcResultType,
                         Explosion &scalars, bool isSwiftCCReturn,
-                        bool isOutlined);
+                        bool isOutlined, SILType errorType = {});
   void emitScalarReturn(llvm::Type *resultTy, Explosion &scalars);
   
   void emitBBForReturn();
@@ -357,6 +357,15 @@ public:
   llvm::Value *emitTargetOSVersionAtLeastCall(llvm::Value *major,
                                               llvm::Value *minor,
                                               llvm::Value *patch);
+
+  llvm::Value *emitTargetVariantOSVersionAtLeastCall(llvm::Value *major,
+                                                     llvm::Value *minor,
+                                                     llvm::Value *patch);
+
+  llvm::Value *emitTargetOSVersionOrVariantOSVersionAtLeastCall(
+      llvm::Value *major, llvm::Value *minor, llvm::Value *patch,
+      llvm::Value *variantMajor, llvm::Value *variantMinor,
+      llvm::Value *variantPatch);
 
   llvm::Value *emitProjectBoxCall(llvm::Value *box, llvm::Value *typeMetadata);
 

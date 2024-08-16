@@ -33,7 +33,13 @@ set(SWIFT_SYNCHRONIZATION_GYB_SOURCES
   Atomics/AtomicStorage.swift.gyb
 )
 
-# Darwin sources
+# Darwin dependencies and sources
+
+set(SWIFT_SYNCHRONIZATION_DARWIN_DEPENDENCIES)
+
+if(SWIFT_BUILD_SDK_OVERLAY)
+  set(SWIFT_SYNCHRONIZATION_DARWIN_DEPENDENCIES Darwin)
+endif()
 
 set(SWIFT_SYNCHRONIZATION_DARWIN_SOURCES
   Mutex/DarwinImpl.swift
@@ -96,15 +102,17 @@ add_swift_target_library(swiftSynchronization ${SWIFT_STDLIB_LIBRARY_BUILD_TYPES
     Mutex/MutexUnavailable.swift
 
   SWIFT_MODULE_DEPENDS_OSX
-    Darwin
+    ${SWIFT_SYNCHRONIZATION_DARWIN_DEPENDENCIES}
   SWIFT_MODULE_DEPENDS_IOS
-    Darwin
+    ${SWIFT_SYNCHRONIZATION_DARWIN_DEPENDENCIES}
   SWIFT_MODULE_DEPENDS_TVOS
-    Darwin
+    ${SWIFT_SYNCHRONIZATION_DARWIN_DEPENDENCIES}
   SWIFT_MODULE_DEPENDS_WATCHOS
-    Darwin
+    ${SWIFT_SYNCHRONIZATION_DARWIN_DEPENDENCIES}
   SWIFT_MODULE_DEPENDS_XROS
-    Darwin
+    ${SWIFT_SYNCHRONIZATION_DARWIN_DEPENDENCIES}
+  SWIFT_MODULE_DEPENDS_MACCATALYST
+    ${SWIFT_SYNCHRONIZATION_DARWIN_DEPENDENCIES}
   SWIFT_MODULE_DEPENDS_LINUX
     Glibc
   SWIFT_MODULE_DEPENDS_ANDROID
@@ -126,13 +134,19 @@ add_swift_target_library(swiftSynchronization ${SWIFT_STDLIB_LIBRARY_BUILD_TYPES
 # i.e. there is no .o or .a file produced (no binary code is actually produced)
 # and only users of a library are going to actually compile any needed code.
 if(SWIFT_SHOULD_BUILD_EMBEDDED_STDLIB)
-  add_custom_target(embedded-synchronization ALL)
+  add_custom_target(embedded-synchronization)
+  add_dependencies(embedded-libraries embedded-synchronization)
 
   foreach(entry ${EMBEDDED_STDLIB_TARGET_TRIPLES})
     string(REGEX REPLACE "[ \t]+" ";" list "${entry}")
     list(GET list 0 arch)
     list(GET list 1 mod)
     list(GET list 2 triple)
+
+    # Disable the Synchronization library on AVR for now.
+    if("${arch}" MATCHES "avr")
+      continue()
+    endif()
     
     set(SWIFT_SDK_embedded_ARCH_${arch}_MODULE "${mod}")
     set(SWIFT_SDK_embedded_LIB_SUBDIR "embedded")

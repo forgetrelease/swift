@@ -26,6 +26,7 @@
 #include "swift/AST/ASTVisitor.h"
 #include "swift/AST/ASTWalker.h"
 #include "swift/AST/ClangModuleLoader.h"
+#include "swift/AST/ConformanceLookup.h"
 #include "swift/AST/Effects.h"
 #include "swift/AST/ExistentialLayout.h"
 #include "swift/AST/GenericEnvironment.h"
@@ -37,6 +38,7 @@
 #include "swift/AST/SourceFile.h"
 #include "swift/AST/SubstitutionMap.h"
 #include "swift/AST/TypeCheckRequests.h"
+#include "swift/Basic/Assertions.h"
 #include "swift/Basic/Defer.h"
 #include "swift/Basic/StringExtras.h"
 #include "swift/Sema/ConstraintSystem.h"
@@ -120,8 +122,7 @@ Solution::computeSubstitutions(NullablePtr<ValueDecl> decl,
     }
 
     // FIXME: Retrieve the conformance from the solution itself.
-    auto conformance =
-        getConstraintSystem().DC->getParentModule()->lookupConformance(
+    auto conformance = lookupConformance(
             replacement, protoType, /*allowMissing=*/true);
 
     if (conformance.isInvalid()) {
@@ -383,10 +384,12 @@ static bool willHaveConfusingConsumption(Type type,
   case ConstraintLocator::ApplyArgToParam: {
     auto argLoc = loc->castLastElementTo<LocatorPathElt::ApplyArgToParam>();
     auto paramFlags = argLoc.getParameterFlags();
-    if (paramFlags.getOwnershipSpecifier() == ParamSpecifier::Consuming)
-      return false; // Parameter already declares 'consuming'.
+    // If the param declares borrowing, then this implicit consumption
+    // due to the conversion to pass the argument is indeed confusing.
+    if (paramFlags.getOwnershipSpecifier() == ParamSpecifier::Borrowing)
+      return true;
 
-    return true;
+    return false;
   }
 
   default:
@@ -579,7 +582,7 @@ namespace {
 
       return SubstitutionMap::get(sig,
                                   QueryTypeSubstitutionMap{subs},
-                                  LookUpConformanceInModule(dc->getParentModule()));
+                                  LookUpConformanceInModule());
     }
 
     /// Determine whether the given reference is to a method on
@@ -618,8 +621,7 @@ namespace {
           // FIXME: This is awful. We should be able to handle this as a call to
           // the protocol requirement with Self == the concrete type, and SILGen
           // (or later) can devirtualize as appropriate.
-          auto conformance =
-            dc->getParentModule()->checkConformance(baseTy, proto);
+          auto conformance = checkConformance(baseTy, proto);
           if (conformance.isConcrete()) {
             if (auto witness = conformance.getConcrete()->getWitnessDecl(decl)) {
               bool isMemberOperator = witness->getDeclContext()->isTypeContext();
@@ -2554,7 +2556,7 @@ namespace {
 
       // Try to find the conformance of the value type to _BridgedToObjectiveC.
       auto bridgedToObjectiveCConformance
-        = dc->getParentModule()->checkConformance(valueType, bridgedProto);
+        = checkConformance(valueType, bridgedProto);
 
       FuncDecl *fn = nullptr;
 
@@ -2815,7 +2817,7 @@ namespace {
       ProtocolDecl *protocol = TypeChecker::getProtocol(
           ctx, expr->getLoc(), KnownProtocolKind::ExpressibleByStringLiteral);
 
-      if (!dc->getParentModule()->checkConformance(type, protocol)) {
+      if (!checkConformance(type, protocol)) {
         // If the type does not conform to ExpressibleByStringLiteral, it should
         // be ExpressibleByExtendedGraphemeClusterLiteral.
         protocol = TypeChecker::getProtocol(
@@ -2824,7 +2826,7 @@ namespace {
         isStringLiteral = false;
         isGraphemeClusterLiteral = true;
       }
-      if (!dc->getParentModule()->checkConformance(type, protocol)) {
+      if (!checkConformance(type, protocol)) {
         // ... or it should be ExpressibleByUnicodeScalarLiteral.
         protocol = TypeChecker::getProtocol(
             cs.getASTContext(), expr->getLoc(),
@@ -2938,8 +2940,7 @@ namespace {
         auto proto = TypeChecker::getProtocol(ctx, loc, protocolKind);
         assert(proto && "Missing string interpolation protocol?");
 
-        auto conformance =
-          dc->getParentModule()->checkConformance(type, proto);
+        auto conformance = checkConformance(type, proto);
         assert(conformance && "string interpolation type conforms to protocol");
 
         DeclName constrName(ctx, DeclBaseName::createConstructor(), argLabels);
@@ -3079,8 +3080,7 @@ namespace {
       // Find the appropriate object literal protocol.
       auto proto = TypeChecker::getLiteralProtocol(ctx, expr);
       assert(proto && "Missing object literal protocol?");
-      auto conformance =
-        dc->getParentModule()->checkConformance(conformingType, proto);
+      auto conformance = checkConformance(conformingType, proto);
       assert(conformance && "object literal type conforms to protocol");
 
       auto constrName = TypeChecker::getObjectLiteralConstructorName(ctx, expr);
@@ -3788,8 +3788,7 @@ namespace {
           ctx, expr->getLoc(), KnownProtocolKind::ExpressibleByArrayLiteral);
       assert(arrayProto && "type-checked array literal w/o protocol?!");
 
-      auto conformance =
-        dc->getParentModule()->checkConformance(arrayTy, arrayProto);
+      auto conformance = checkConformance(arrayTy, arrayProto);
       assert(conformance && "Type does not conform to protocol?");
 
       DeclName name(ctx, DeclBaseName::createConstructor(),
@@ -3834,8 +3833,7 @@ namespace {
           cs.getASTContext(), expr->getLoc(),
           KnownProtocolKind::ExpressibleByDictionaryLiteral);
 
-      auto conformance =
-        dc->getParentModule()->checkConformance(dictionaryTy, dictionaryProto);
+      auto conformance = checkConformance(dictionaryTy, dictionaryProto);
       if (conformance.isInvalid())
         return nullptr;
 
@@ -5408,8 +5406,8 @@ namespace {
         auto indexType = getTypeOfDynamicMemberIndex(overload);
         Expr *argExpr = nullptr;
         if (overload.choice.isKeyPathDynamicMemberLookup()) {
-          argExpr = buildKeyPathDynamicMemberArgExpr(
-              indexType->castTo<BoundGenericType>(), componentLoc, memberLoc);
+          argExpr = buildKeyPathDynamicMemberArgExpr(indexType, componentLoc,
+                                                     memberLoc);
         } else {
           auto fieldName = overload.choice.getName().getBaseIdentifier().str();
           argExpr = buildDynamicMemberLookupArgExpr(fieldName, componentLoc,
@@ -5448,8 +5446,7 @@ namespace {
         // Index type conformance to Hashable protocol has been
         // verified by the solver, we just need to get it again
         // with all of the generic parameters resolved.
-        auto hashableConformance =
-          dc->getParentModule()->checkConformance(indexType, hashable);
+        auto hashableConformance = checkConformance(indexType, hashable);
         assert(hashableConformance);
 
         conformances.push_back(hashableConformance);
@@ -5557,7 +5554,6 @@ namespace {
       assert(OpenedExistentials.empty());
 
       auto &ctx = cs.getASTContext();
-      auto *module = dc->getParentModule();
 
       // Look at all of the suspicious optional injections
       for (auto injection : SuspiciousOptionalInjections) {
@@ -5963,23 +5959,26 @@ static bool hasCurriedSelf(ConstraintSystem &cs, ConcreteDeclRef callee,
 }
 
 /// Apply the contextually Sendable flag to the given expression,
-static void applyContextualClosureFlags(
-      Expr *expr, bool implicitSelfCapture, bool inheritActorContext) {
+static void applyContextualClosureFlags(Expr *expr, bool implicitSelfCapture,
+                                        bool inheritActorContext,
+                                        bool isPassedToSendingParameter) {
   if (auto closure = dyn_cast<ClosureExpr>(expr)) {
     closure->setAllowsImplicitSelfCapture(implicitSelfCapture);
     closure->setInheritsActorContext(inheritActorContext);
+    closure->setIsPassedToSendingParameter(isPassedToSendingParameter);
     return;
   }
 
   if (auto captureList = dyn_cast<CaptureListExpr>(expr)) {
-    applyContextualClosureFlags(
-        captureList->getClosureBody(), implicitSelfCapture,
-        inheritActorContext);
+    applyContextualClosureFlags(captureList->getClosureBody(),
+                                implicitSelfCapture, inheritActorContext,
+                                isPassedToSendingParameter);
   }
 
   if (auto identity = dyn_cast<IdentityExpr>(expr)) {
-    applyContextualClosureFlags(
-        identity->getSubExpr(), implicitSelfCapture, inheritActorContext);
+    applyContextualClosureFlags(identity->getSubExpr(), implicitSelfCapture,
+                                inheritActorContext,
+                                isPassedToSendingParameter);
   }
 }
 
@@ -6207,8 +6206,12 @@ ArgumentList *ExprRewriter::coerceCallArguments(
     // implicit self capture or inheriting actor context.
     bool isImplicitSelfCapture = paramInfo.isImplicitSelfCapture(paramIdx);
     bool inheritsActorContext = paramInfo.inheritsActorContext(paramIdx);
-    applyContextualClosureFlags(
-        argExpr, isImplicitSelfCapture, inheritsActorContext);
+    bool isPassedToSendingParameter =
+        paramInfo.isPassedToSendingParameter(paramIdx);
+
+    applyContextualClosureFlags(argExpr, isImplicitSelfCapture,
+                                inheritsActorContext,
+                                isPassedToSendingParameter);
 
     // If the types exactly match, this is easy.
     auto paramType = param.getOldType();
@@ -6902,10 +6905,9 @@ Expr *ExprRewriter::coerceExistential(Expr *expr, Type toType,
         new (ctx) OpaqueValueExpr(expr->getSourceRange(), openedFromType));
 
     auto conformances =
-        dc->getParentModule()
-          ->collectExistentialConformances(openedFromInstanceType->getCanonicalType(),
-                                           toInstanceType->getCanonicalType(),
-                                           /*allowMissing=*/true);
+        collectExistentialConformances(openedFromInstanceType->getCanonicalType(),
+                                       toInstanceType->getCanonicalType(),
+                                       /*allowMissing=*/true);
 
     auto *result = cs.cacheType(ErasureExpr::create(ctx, archetypeVal, toType,
                                                     conformances,
@@ -6923,10 +6925,9 @@ Expr *ExprRewriter::coerceExistential(Expr *expr, Type toType,
   }
 
   auto conformances =
-      dc->getParentModule()
-        ->collectExistentialConformances(fromInstanceType->getCanonicalType(),
-                                         toInstanceType->getCanonicalType(),
-                                         /*allowMissing=*/true);
+      collectExistentialConformances(fromInstanceType->getCanonicalType(),
+                                     toInstanceType->getCanonicalType(),
+                                     /*allowMissing=*/true);
 
   return cs.cacheType(ErasureExpr::create(ctx, expr, toType,
                                           conformances, argConversions));
@@ -7072,9 +7073,7 @@ Expr *ExprRewriter::coerceToType(Expr *expr, Type toType,
 
       // Find the conformance of the source type to Hashable.
       auto hashable = ctx.getProtocol(KnownProtocolKind::Hashable);
-      auto conformance =
-        dc->getParentModule()->checkConformance(
-                        cs.getType(expr), hashable);
+      auto conformance = checkConformance(cs.getType(expr), hashable);
       assert(conformance && "must conform to Hashable");
 
       return cs.cacheType(
@@ -7317,7 +7316,7 @@ Expr *ExprRewriter::coerceToType(Expr *expr, Type toType,
           }
           return type;
         },
-        LookUpConformanceInModule(cs.DC->getParentModule()),
+        LookUpConformanceInModule(),
         SubstFlags::SubstituteOpaqueArchetypes);
 
       // Coerce the result expression to the underlying type.
@@ -7797,6 +7796,20 @@ Expr *ExprRewriter::coerceToType(Expr *expr, Type toType,
     llvm_unreachable("BuiltinTupleType should not show up here");
   }
 
+  // Allow existential-to-supertype conversion if all protocol
+  // bounds are marker protocols. Normally this requires a
+  // conversion restriction but there are situations related
+  // to `@preconcurrency` where the `& Sendable` would be stripped
+  // transparently to the solver.
+  if (auto *existential = fromType->getAs<ExistentialType>()) {
+    if (auto *PCT = existential->getConstraintType()
+                        ->getAs<ProtocolCompositionType>()) {
+      if (PCT->withoutMarkerProtocols()->isEqual(toType)) {
+        return coerceSuperclass(expr, toType);
+      }
+    }
+  }
+
   // Unresolved types come up in diagnostics for lvalue and inout types.
   if (fromType->hasUnresolvedType() || toType->hasUnresolvedType())
     return cs.cacheType(new (ctx) UnresolvedTypeConversionExpr(expr, toType));
@@ -7931,8 +7944,7 @@ Expr *ExprRewriter::convertLiteralInPlace(
   // Check whether this literal type conforms to the builtin protocol. If so,
   // initialize via the builtin protocol.
   if (builtinProtocol) {
-    auto builtinConformance = dc->getParentModule()->checkConformance(
-        type, builtinProtocol);
+    auto builtinConformance = checkConformance(type, builtinProtocol);
     if (builtinConformance) {
       // Find the witness that we'll use to initialize the type via a builtin
       // literal.
@@ -7955,7 +7967,7 @@ Expr *ExprRewriter::convertLiteralInPlace(
 
   // This literal type must conform to the (non-builtin) protocol.
   assert(protocol && "requirements should have stopped recursion");
-  auto conformance = dc->getParentModule()->checkConformance(type, protocol);
+  auto conformance = checkConformance(type, protocol);
   assert(conformance && "must conform to literal protocol");
 
   // Dig out the literal type and perform a builtin literal conversion to it.
@@ -8078,8 +8090,7 @@ std::pair<Expr *, ArgumentList *> ExprRewriter::buildDynamicCallable(
   } else {
     auto dictLitProto =
         ctx.getProtocol(KnownProtocolKind::ExpressibleByDictionaryLiteral);
-    auto conformance =
-        dc->getParentModule()->checkConformance(argumentType, dictLitProto);
+    auto conformance = checkConformance(argumentType, dictLitProto);
     auto keyType = conformance.getTypeWitnessByName(argumentType, ctx.Id_Key);
     auto valueType =
         conformance.getTypeWitnessByName(argumentType, ctx.Id_Value);
@@ -9460,8 +9471,7 @@ static std::optional<SequenceIterationInfo> applySolutionToForEachStmt(
         parsedSequence, LocatorPathElt::ContextualType(CTP_ForEachSequence));
     type = Type(solution.OpenedExistentialTypes[contextualLoc]);
   }
-  auto sequenceConformance = dc->getParentModule()->checkConformance(
-      type, sequenceProto);
+  auto sequenceConformance = checkConformance(type, sequenceProto);
   assert(!sequenceConformance.isInvalid() &&
          "Couldn't find sequence conformance");
   stmt->setSequenceConformance(type, sequenceConformance);

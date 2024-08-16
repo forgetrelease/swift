@@ -207,9 +207,6 @@ def no_serialize_debugging_options :
 def autolink_library : Separate<["-"], "autolink-library">,
   HelpText<"Add dependent library">, Flags<[FrontendOption]>;
 
-def public_autolink_library : Separate<["-"], "public-autolink-library">,
-  HelpText<"Add public dependent library">, Flags<[FrontendOption]>;
-
 def disable_typo_correction : Flag<["-"], "disable-typo-correction">,
   HelpText<"Disable typo correction">;
 
@@ -369,6 +366,10 @@ def enable_resilience : Flag<["-"], "enable-resilience">,
 def enable_experimental_async_top_level :
   Flag<["-"], "enable-experimental-async-top-level">,
   HelpText<"Enable experimental concurrency in top-level code">;
+
+def public_autolink_library :
+  Separate<["-"], "public-autolink-library">,
+  HelpText<"Add public dependent library">;
 }
 
 // HIDDEN FLAGS
@@ -413,6 +414,10 @@ def dump_macro_expansions : Flag<["-"], "dump-macro-expansions">,
   HelpText<"Dumps the results of each macro expansion">;
 def emit_macro_expansion_files : Separate<["-"], "emit-macro-expansion-files">,
   HelpText<"Specify when to emit macro expansion file: 'none', 'debug', or 'diagnostics'">;
+
+def analyze_request_evaluator : Flag<["-"], "analyze-request-evaluator">,
+  Flags<[FrontendOption, HelpHidden, DoesNotAffectIncrementalBuild]>,
+  HelpText<"Print out request evaluator cache statistics at the end of the compilation job">;
 
 def analyze_requirement_machine : Flag<["-"], "analyze-requirement-machine">,
   Flags<[FrontendOption, HelpHidden, DoesNotAffectIncrementalBuild]>,
@@ -462,7 +467,7 @@ def debug_generic_signatures : Flag<["-"], "debug-generic-signatures">,
   HelpText<"Debug generic signatures">;
 
 def debug_inverse_requirements : Flag<["-"], "debug-inverse-requirements">,
-  HelpText<"Print real requirements in -debug_generic_signatures output">;
+  HelpText<"Print real requirements in -debug-generic-signatures output">;
 
 def debug_forbid_typecheck_prefix : Separate<["-"], "debug-forbid-typecheck-prefix">,
   HelpText<"Triggers llvm fatal_error if typechecker tries to typecheck a decl "
@@ -534,6 +539,11 @@ def enable_spec_devirt : Flag<["-"], "enable-spec-devirt">,
 
 def enable_async_demotion : Flag<["-"], "enable-experimental-async-demotion">,
   HelpText<"Enables an optimization pass to demote async functions.">;
+
+def enable_throws_prediction : Flag<["-"], "enable-throws-prediction">,
+  HelpText<"Enables optimization assumption that functions rarely throw errors.">;
+def disable_throws_prediction : Flag<["-"], "disable-throws-prediction">,
+  HelpText<"Disables optimization assumption that functions rarely throw errors.">;
 
 def disable_access_control : Flag<["-"], "disable-access-control">,
   HelpText<"Don't respect access control restrictions">;
@@ -794,7 +804,7 @@ def warn_long_function_bodies_EQ : Joined<["-"], "warn-long-function-bodies=">,
 
 def warn_long_expression_type_checking : Separate<["-"], "warn-long-expression-type-checking">,
   MetaVarName<"<n>">,
-  HelpText<"Warns when type-checking a function takes longer than <n> ms">;
+  HelpText<"Warns when type-checking an expression takes longer than <n> ms">;
 def warn_long_expression_type_checking_EQ : Joined<["-"], "warn-long-expression-type-checking=">,
   Alias<warn_long_expression_type_checking>;
 
@@ -1256,6 +1266,12 @@ def enable_move_inout_stack_protector :
   Flag<["-"], "enable-move-inout-stack-protector">,
   HelpText<"Enable the stack protector by moving values to temporaries">;
 
+// This feature is enabled by default, the flag is a no-op.
+def enable_import_ptrauth_field_function_pointers :
+   Flag<["-"], "enable-import-ptrauth-field-function-pointers">,
+   HelpText<"Enable import of custom ptrauth qualified field function pointers. "
+            "This is on by default.">;
+
 def disable_import_ptrauth_field_function_pointers :
   Flag<["-"], "disable-import-ptrauth-field-function-pointers">,
   HelpText<"Disable import of custom ptrauth qualified field function pointers">;
@@ -1293,6 +1309,13 @@ def enable_fragile_resilient_protocol_witnesses :
 def disable_fragile_resilient_protocol_witnesses :
   Flag<["-"], "disable-fragile-relative-protocol-tables">,
   HelpText<"Disable relative protocol witness tables">;
+
+def enable_split_cold_code :
+  Flag<["-"], "enable-split-cold-code">,
+  HelpText<"Enable splitting of cold code when optimizing">;
+def disable_split_cold_code :
+  Flag<["-"], "disable-split-cold-code">,
+  HelpText<"Disable splitting of cold code when optimizing">;
 
 def enable_new_llvm_pass_manager :
   Flag<["-"], "enable-new-llvm-pass-manager">,
@@ -1370,21 +1393,13 @@ def disable_experimental_parser_round_trip : Flag<["-"],
   "disable-experimental-parser-round-trip">,
   HelpText<"Disable round trip through the new swift parser">;
 
-def disable_strict_concurrency_region_based_isolation : Flag<["-"],
-  "disable-region-based-isolation-with-strict-concurrency">,
-  HelpText<"Disable region based isolation when running with strict concurrency enabled. Only enabled with asserts">,
-  Flags<[HelpHidden]>;
-
-def disable_transferring_args_and_results_with_region_isolation : Flag<["-"],
-  "disable-transferring-args-and-results-with-region-based-isolation">,
-  HelpText<"Disable transferring args and results when region based isolation is enabled. Only enabled with asserts">,
-  Flags<[HelpHidden]>;
-
 def disable_sending_args_and_results_with_region_isolation : Flag<["-"],
   "disable-sending-args-and-results-with-region-based-isolation">,
   HelpText<"Disable sending args and results when region based isolation is enabled. Only enabled with asserts">,
   Flags<[HelpHidden]>;
 
+def scanner_module_validation: Flag<["-"], "scanner-module-validation">,
+    HelpText<"Validate binary modules in the dependency scanner">;
 def no_scanner_module_validation: Flag<["-"], "no-scanner-module-validation">,
     HelpText<"Do not validate binary modules in scanner and delegate the validation to swift-frontend">;
 def module_load_mode: Separate<["-"], "module-load-mode">,

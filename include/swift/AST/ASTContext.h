@@ -84,8 +84,6 @@ namespace swift {
   class DifferentiableAttr;
   class ExtensionDecl;
   struct ExternalSourceLocs;
-  class LoadedExecutablePlugin;
-  class LoadedLibraryPlugin;
   class ForeignRepresentationInfo;
   class FuncDecl;
   class GenericContext;
@@ -736,6 +734,13 @@ public:
   // Retrieve the declaration of Swift._stdlib_isOSVersionAtLeast.
   FuncDecl *getIsOSVersionAtLeastDecl() const;
 
+  // Retrieve the declaration of Swift._stdlib_isVariantOSVersionAtLeast.
+  FuncDecl *getIsVariantOSVersionAtLeastDecl() const;
+
+  // Retrieve the declaration of
+  // Swift._stdlib_isOSVersionAtLeastOrVariantVersionAtLeast.
+  FuncDecl *getIsOSVersionAtLeastOrVariantVersionAtLeast() const;
+
   /// Look for the declaration with the given name within the
   /// passed in module.
   void lookupInModule(ModuleDecl *M, StringRef name,
@@ -1109,7 +1114,7 @@ public:
   ///
   /// Note that even if this check succeeds, errors may still occur if the
   /// module is loaded in full.
-  bool canImportModuleImpl(ImportPath::Module ModulePath,
+  bool canImportModuleImpl(ImportPath::Module ModulePath, SourceLoc loc,
                            llvm::VersionTuple version, bool underlyingVersion,
                            bool updateFailingList,
                            llvm::VersionTuple &foundVersion) const;
@@ -1146,7 +1151,7 @@ public:
   ///
   /// Note that even if this check succeeds, errors may still occur if the
   /// module is loaded in full.
-  bool canImportModule(ImportPath::Module ModulePath,
+  bool canImportModule(ImportPath::Module ModulePath, SourceLoc loc,
                        llvm::VersionTuple version = llvm::VersionTuple(),
                        bool underlyingVersion = false);
 
@@ -1500,10 +1505,6 @@ public:
 
   /// The declared interface type of Builtin.TheTupleType.
   BuiltinTupleType *getBuiltinTupleType();
-
-  /// The declaration for the `_diagnoseUnavailableCodeReached()` declaration
-  /// that ought to be used for the configured deployment target.
-  FuncDecl *getDiagnoseUnavailableCodeReachedDecl();
 
   Type getNamedSwiftType(ModuleDecl *module, StringRef name);
 

@@ -22,6 +22,7 @@
 #include "swift/AST/PrintOptions.h"
 #include "swift/AST/ProtocolConformance.h"
 #include "swift/AST/Types.h"
+#include "swift/Basic/Assertions.h"
 #include "swift/Basic/QuotedString.h"
 #include "swift/Basic/STLExtras.h"
 #include "swift/Basic/SourceManager.h"
@@ -1572,6 +1573,10 @@ public:
     visitApplyInstBase(AI);
     *this << ", normal " << Ctx.getID(AI->getNormalBB());
     *this << ", error " << Ctx.getID(AI->getErrorBB());
+    if (AI->getNormalBBCount())
+      *this << " !normal_count(" << AI->getNormalBBCount().getValue() << ")";
+    if (AI->getErrorBBCount())
+      *this << " !error_count(" << AI->getErrorBBCount().getValue() << ")";
   }
 
   void visitPartialApplyInst(PartialApplyInst *CI) {
@@ -1590,6 +1595,7 @@ public:
     case ParameterConvention::Indirect_Inout:
     case ParameterConvention::Indirect_In_Guaranteed:
     case ParameterConvention::Indirect_InoutAliasable:
+    case ParameterConvention::Indirect_In_CXX:
     case ParameterConvention::Pack_Guaranteed:
     case ParameterConvention::Pack_Owned:
     case ParameterConvention::Pack_Inout:
@@ -1733,6 +1739,9 @@ public:
   }
 
   void visitLoadBorrowInst(LoadBorrowInst *LBI) {
+    if (LBI->isUnchecked()) {
+      *this << "[unchecked] ";
+    }
     *this << getIDAndType(LBI->getOperand());
   }
 
@@ -2226,6 +2235,8 @@ public:
   void visitDestroyValueInst(DestroyValueInst *I) {
     if (I->poisonRefs())
       *this << "[poison] ";
+    if (I->isDeadEnd())
+      *this << "[dead_end] ";
     *this << getIDAndType(I->getOperand());
   }
 
@@ -2642,6 +2653,8 @@ public:
     *this << getIDAndType(DPI->getMetatype());
   }
   void visitDeallocBoxInst(DeallocBoxInst *DI) {
+    if (DI->isDeadEnd())
+      *this << "[dead_end] ";
     *this << getIDAndType(DI->getOperand());
   }
   void visitDestroyAddrInst(DestroyAddrInst *DI) {
@@ -3236,20 +3249,30 @@ void SILBasicBlock::print(SILPrintContext &Ctx) const {
   SILPrinter(Ctx).print(this);
 }
 
-#ifndef NDEBUG
 void SILBasicBlock::dumpID(bool newline) const {
+#ifndef NDEBUG
   printID(llvm::errs(), newline);
+#else
+  llvm::errs() << "NOASSERTS" << (newline ? "\n" : "");
+#endif
 }
 
 void SILBasicBlock::printID(llvm::raw_ostream &OS, bool newline) const {
+#ifndef NDEBUG
   SILPrintContext Ctx(OS);
   printID(Ctx, newline);
+#else
+  llvm::errs() << "NOASSERTS" << (newline ? "\n" : "");
+#endif
 }
 
 void SILBasicBlock::printID(SILPrintContext &Ctx, bool newline) const {
+#ifndef NDEBUG
   SILPrinter(Ctx).printID(this, newline);
-}
+#else
+  llvm::errs() << "NOASSERTS" << (newline ? "\n" : "");
 #endif
+}
 
 /// Pretty-print the SILFunction to errs.
 void SILFunction::dump(bool Verbose) const {

@@ -1115,6 +1115,11 @@ ManglingError Remangler::mangleMacroExpansionUniqueName(
   return mangleChildNodes(node, depth + 1);
 }
 
+ManglingError Remangler::mangleMacroExpansionLoc(
+    Node *node, unsigned depth) {
+  return MANGLING_ERROR(ManglingError::UnsupportedNodeKind, node);
+}
+
 ManglingError Remangler::mangleAccessor(Node *storageNode,
                                         StringRef accessorCode,
                                         EntityContext &ctx, unsigned depth) {
@@ -1938,13 +1943,7 @@ ManglingError Remangler::mangleNoDerivative(Node *node, unsigned depth) {
   return mangleSingleChildNode(node, depth + 1); // type
 }
 
-ManglingError Remangler::mangleParamLifetimeDependence(Node *node,
-                                                       unsigned depth) {
-  return MANGLING_ERROR(ManglingError::UnsupportedNodeKind, node);
-}
-
-ManglingError Remangler::mangleSelfLifetimeDependence(Node *node,
-                                                      unsigned depth) {
+ManglingError Remangler::mangleLifetimeDependence(Node *node, unsigned depth) {
   return MANGLING_ERROR(ManglingError::UnsupportedNodeKind, node);
 }
 
@@ -3052,5 +3051,7 @@ ManglingError Remangler::mangleHasSymbolQuery(Node *node, unsigned depth) {
 ManglingError
 Remangler::mangleDependentGenericInverseConformanceRequirement(Node *node,
                                                                unsigned depth) {
-  return MANGLING_ERROR(ManglingError::UnsupportedNodeKind, node);
+  DEMANGLER_ASSERT(node->getNumChildren() == 2, node);
+  RETURN_IF_ERROR(mangleConstrainedType(node->getChild(0), depth + 1));
+  return mangle(node->getChild(1), depth + 1);
 }

@@ -32,6 +32,7 @@
 #include "swift/AST/AccessScope.h"
 #include "swift/AST/Attr.h"
 #include "swift/AST/ClangModuleLoader.h"
+#include "swift/AST/ConformanceLookup.h"
 #include "swift/AST/ExistentialLayout.h"
 #include "swift/AST/Expr.h"
 #include "swift/AST/ForeignErrorConvention.h"
@@ -46,7 +47,9 @@
 #include "swift/AST/SourceFile.h"
 #include "swift/AST/TypeCheckRequests.h"
 #include "swift/AST/TypeWalker.h"
+#include "swift/Basic/Assertions.h"
 #include "swift/Basic/Defer.h"
+#include "swift/Bridging/ASTGen.h"
 #include "swift/Parse/Lexer.h"
 #include "swift/Parse/Parser.h"
 #include "swift/Sema/IDETypeChecking.h"
@@ -210,7 +213,7 @@ public:
       return a.intValue.v0 == b.intValue.v0 &&
              a.intValue.v1 == b.intValue.v1;
     case RawValueKey::Kind::String:
-      return a.stringValue.equals(b.stringValue);
+      return a.stringValue == b.stringValue;
     case RawValueKey::Kind::Bool:
       return a.boolValue == b.boolValue;
     case RawValueKey::Kind::Empty:
@@ -378,8 +381,9 @@ static bool doesAccessorNeedDynamicAttribute(AccessorDecl *accessor) {
 CtorInitializerKind
 InitKindRequest::evaluate(Evaluator &evaluator, ConstructorDecl *decl) const {
   auto &diags = decl->getASTContext().Diags;
+  auto dc = decl->getDeclContext();
 
-  if (auto nominal = decl->getDeclContext()->getSelfNominalTypeDecl()) {
+  if (auto nominal = dc->getSelfNominalTypeDecl()) {
 
     // Convenience inits are only allowed on classes and in extensions thereof.
     if (auto convenAttr = decl->getAttrs().getAttribute<ConvenienceAttr>()) {
@@ -389,6 +393,7 @@ InitKindRequest::evaluate(Evaluator &evaluator, ConstructorDecl *decl) const {
           diags.diagnose(decl->getLoc(),
                 diag::no_convenience_keyword_init, "actors")
             .fixItRemove(convenAttr->getLocation())
+            .warnInSwiftInterface(dc)
             .warnUntilSwiftVersion(6);
 
         } else { // not an actor
@@ -446,7 +451,7 @@ InitKindRequest::evaluate(Evaluator &evaluator, ConstructorDecl *decl) const {
       // (or the same file) to add vtable entries, we can re-evaluate this
       // restriction.
       if (!decl->isSynthesized() &&
-          isa<ExtensionDecl>(decl->getDeclContext()->getImplementedObjCContext()) &&
+          isa<ExtensionDecl>(dc->getImplementedObjCContext()) &&
           !(decl->getAttrs().hasAttribute<DynamicReplacementAttr>())) {
 
         if (classDcl->getForeignClassKind() == ClassDecl::ForeignKind::CFType) {
@@ -475,7 +480,7 @@ InitKindRequest::evaluate(Evaluator &evaluator, ConstructorDecl *decl) const {
   } // end of Nominal context
 
   // initializers in protocol extensions must be convenience inits
-  if (decl->getDeclContext()->getExtendedProtocolDecl()) {
+  if (dc->getExtendedProtocolDecl()) {
     return CtorInitializerKind::Convenience;
   }
 
@@ -1174,12 +1179,10 @@ swift::computeAutomaticEnumValueKind(EnumDecl *ED) {
   if (ED->getGenericEnvironmentOfContext() != nullptr)
     rawTy = ED->mapTypeIntoContext(rawTy);
 
-  auto *module = ED->getParentModule();
-
   // Swift enums require that the raw type is convertible from one of the
   // primitive literal protocols.
   auto conformsToProtocol = [&](KnownProtocolKind protoKind) {
-    return TypeChecker::conformsToKnownProtocol(rawTy, protoKind, module);
+    return TypeChecker::conformsToKnownProtocol(rawTy, protoKind);
   };
 
   static auto otherLiteralProtocolKinds = {
@@ -2257,19 +2260,16 @@ ParamSpecifierRequest::evaluate(Evaluator &evaluator,
   if (auto isolated = dyn_cast<IsolatedTypeRepr>(nestedRepr))
     nestedRepr = isolated->getBase();
 
-  if (auto transferring = dyn_cast<TransferringTypeRepr>(nestedRepr)) {
-    // If we do not have an Ownership Repr, return implicit copyable consuming.
-    auto *base = transferring->getBase();
-    if (!isa<OwnershipTypeRepr>(base)) {
-      return ParamSpecifier::ImplicitlyCopyableConsuming;
-    }
-    nestedRepr = base;
+  if (auto *lifetime = dyn_cast<LifetimeDependentTypeRepr>(nestedRepr)) {
+    nestedRepr = lifetime->getBase();
   }
 
   if (auto sending = dyn_cast<SendingTypeRepr>(nestedRepr)) {
-    // If we do not have an Ownership Repr, return implicit copyable consuming.
+    // If we do not have an Ownership Repr and do not have a no escape type,
+    // return implicit copyable consuming.
     auto *base = sending->getBase();
-    if (!isa<OwnershipTypeRepr>(base)) {
+    if (!param->getInterfaceType()->isNoEscape() &&
+        !isa<OwnershipTypeRepr>(base)) {
       return ParamSpecifier::ImplicitlyCopyableConsuming;
     }
     nestedRepr = base;
@@ -2542,8 +2542,7 @@ InterfaceTypeRequest::evaluate(Evaluator &eval, ValueDecl *D) const {
       ProtocolDecl *errorProto = Context.getErrorDecl();
       if (thrownTy && errorProto) {
         Type thrownTyInContext = AFD->mapTypeIntoContext(thrownTy);
-        if (!AFD->getParentModule()->checkConformance(
-                thrownTyInContext, errorProto)) {
+        if (!checkConformance(thrownTyInContext, errorProto)) {
           SourceLoc loc;
           if (auto thrownTypeRepr = AFD->getThrownTypeRepr())
             loc = thrownTypeRepr->getLoc();
@@ -2565,7 +2564,7 @@ InterfaceTypeRequest::evaluate(Evaluator &eval, ValueDecl *D) const {
       resultTy = TupleType::getEmpty(AFD->getASTContext());
     }
 
-    auto lifetimeDependenceInfo = AFD->getLifetimeDependenceInfo();
+    auto lifetimeDependenceInfo = AFD->getLifetimeDependencies();
 
     // (Args...) -> Result
     Type funcTy;
@@ -2588,7 +2587,7 @@ InterfaceTypeRequest::evaluate(Evaluator &eval, ValueDecl *D) const {
 
       if (lifetimeDependenceInfo.has_value()) {
         infoBuilder =
-            infoBuilder.withLifetimeDependenceInfo(*lifetimeDependenceInfo);
+            infoBuilder.withLifetimeDependencies(*lifetimeDependenceInfo);
       }
 
       auto info = infoBuilder.build();
@@ -2608,7 +2607,7 @@ InterfaceTypeRequest::evaluate(Evaluator &eval, ValueDecl *D) const {
       maybeAddParameterIsolation(selfInfoBuilder, {selfParam});
       if (lifetimeDependenceInfo.has_value()) {
         selfInfoBuilder =
-            selfInfoBuilder.withLifetimeDependenceInfo(*lifetimeDependenceInfo);
+            selfInfoBuilder.withLifetimeDependencies(*lifetimeDependenceInfo);
       }
 
       // FIXME: Verify ExtInfo state is correct, not working by accident.
@@ -3119,8 +3118,78 @@ ImplicitKnownProtocolConformanceRequest::evaluate(Evaluator &evaluator,
   }
 }
 
-std::optional<LifetimeDependenceInfo>
+std::optional<llvm::ArrayRef<LifetimeDependenceInfo>>
 LifetimeDependenceInfoRequest::evaluate(Evaluator &evaluator,
                                         AbstractFunctionDecl *decl) const {
   return LifetimeDependenceInfo::get(decl);
+}
+
+ArrayRef<IfConfigClauseRangeInfo> SourceFile::getIfConfigClauseRanges() const {
+#if SWIFT_BUILD_SWIFT_SYNTAX
+  if (!IfConfigClauseRanges.IsSorted) {
+    IfConfigClauseRanges.Ranges.clear();
+
+    BridgedIfConfigClauseRangeInfo *regions;
+    intptr_t numRegions = swift_ASTGen_configuredRegions(
+        getASTContext(), getExportedSourceFile(), &regions);
+    IfConfigClauseRanges.Ranges.reserve(numRegions);
+    for (intptr_t i = 0; i != numRegions; ++i)
+      IfConfigClauseRanges.Ranges.push_back(regions[i].unbridged());
+    swift_ASTGen_freeConfiguredRegions(regions, numRegions);
+
+    IfConfigClauseRanges.IsSorted = true;
+  }
+#else
+  if (!IfConfigClauseRanges.IsSorted) {
+    auto &SM = getASTContext().SourceMgr;
+    // Sort the ranges if we need to.
+    llvm::sort(
+        IfConfigClauseRanges.Ranges, [&](const IfConfigClauseRangeInfo &lhs,
+                                         const IfConfigClauseRangeInfo &rhs) {
+          return SM.isBeforeInBuffer(lhs.getStartLoc(), rhs.getStartLoc());
+        });
+
+    // Be defensive and eliminate duplicates in case we've parsed twice.
+    auto newEnd = llvm::unique(
+        IfConfigClauseRanges.Ranges, [&](const IfConfigClauseRangeInfo &lhs,
+                                         const IfConfigClauseRangeInfo &rhs) {
+          if (lhs.getStartLoc() != rhs.getStartLoc())
+            return false;
+          assert(lhs.getBodyRange(SM) == rhs.getBodyRange(SM) &&
+                 "range changed on a re-parse?");
+          return true;
+        });
+    IfConfigClauseRanges.Ranges.erase(newEnd,
+                                      IfConfigClauseRanges.Ranges.end());
+    IfConfigClauseRanges.IsSorted = true;
+  }
+#endif
+
+  return IfConfigClauseRanges.Ranges;
+}
+
+ArrayRef<IfConfigClauseRangeInfo>
+SourceFile::getIfConfigClausesWithin(SourceRange outer) const {
+  auto &SM = getASTContext().SourceMgr;
+  assert(SM.getRangeForBuffer(BufferID).contains(outer.Start) &&
+         "Range not within this file?");
+
+  // First let's find the first #if that is after the outer start loc.
+  auto ranges = getIfConfigClauseRanges();
+  auto lower = llvm::lower_bound(
+      ranges, outer.Start,
+      [&](const IfConfigClauseRangeInfo &range, SourceLoc loc) {
+        return SM.isBeforeInBuffer(range.getStartLoc(), loc);
+      });
+  if (lower == ranges.end() ||
+      SM.isBeforeInBuffer(outer.End, lower->getStartLoc())) {
+    return {};
+  }
+  // Next let's find the first #if that's after the outer end loc.
+  auto upper = llvm::upper_bound(
+      ranges, outer.End,
+      [&](SourceLoc loc, const IfConfigClauseRangeInfo &range) {
+        return SM.isBeforeInBuffer(loc, range.getStartLoc());
+      });
+  return llvm::ArrayRef(lower, upper - lower);
 }

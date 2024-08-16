@@ -22,6 +22,7 @@
 
 #define DEBUG_TYPE "copy-propagation"
 
+#include "swift/Basic/Assertions.h"
 #include "swift/SILOptimizer/Utils/CanonicalizeBorrowScope.h"
 #include "swift/Basic/Defer.h"
 #include "swift/SIL/InstructionUtils.h"
@@ -859,7 +860,7 @@ namespace swift::test {
 // Dumps:
 // - function after value canonicalization
 static FunctionTest CanonicalizeBorrowScopeTest(
-    "canonicalize-borrow-scope",
+    "canonicalize_borrow_scope",
     [](auto &function, auto &arguments, auto &test) {
       auto value = arguments.takeValue();
       auto borrowedValue = BorrowedValue(value);

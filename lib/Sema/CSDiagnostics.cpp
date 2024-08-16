@@ -22,6 +22,7 @@
 #include "swift/AST/ASTContext.h"
 #include "swift/AST/ASTPrinter.h"
 #include "swift/AST/ClangModuleLoader.h"
+#include "swift/AST/ConformanceLookup.h"
 #include "swift/AST/Decl.h"
 #include "swift/AST/DiagnosticsClangImporter.h"
 #include "swift/AST/ExistentialLayout.h"
@@ -37,6 +38,7 @@
 #include "swift/AST/SourceFile.h"
 #include "swift/AST/Stmt.h"
 #include "swift/AST/Types.h"
+#include "swift/Basic/Assertions.h"
 #include "swift/Basic/SourceLoc.h"
 #include "swift/ClangImporter/ClangImporterRequests.h"
 #include "swift/Parse/Lexer.h"
@@ -213,9 +215,7 @@ Type FailureDiagnostic::restoreGenericParameters(
 
 bool FailureDiagnostic::conformsToKnownProtocol(
     Type type, KnownProtocolKind protocol) const {
-  auto &cs = getConstraintSystem();
-  return TypeChecker::conformsToKnownProtocol(type, protocol,
-                                              cs.DC->getParentModule());
+  return TypeChecker::conformsToKnownProtocol(type, protocol);
 }
 
 Type RequirementFailure::getOwnerType() const {
@@ -2433,8 +2433,7 @@ AssignmentFailure::getMemberRef(ConstraintLocator *locator) const {
 
   auto *decl = member->choice.getDecl();
   if (isa<SubscriptDecl>(decl) &&
-      isValidDynamicMemberLookupSubscript(cast<SubscriptDecl>(decl),
-                                          getParentModule())) {
+      isValidDynamicMemberLookupSubscript(cast<SubscriptDecl>(decl))) {
     auto *subscript = cast<SubscriptDecl>(decl);
     // If this is a keypath dynamic member lookup, we have to
     // adjust the locator to find member referred by it.
@@ -3195,8 +3194,7 @@ bool ContextualFailure::diagnoseThrowsTypeMismatch() const {
   if (auto errorCodeProtocol =
           Ctx.getProtocol(KnownProtocolKind::ErrorCodeProtocol)) {
     Type errorCodeType = getFromType();
-    auto conformance = getParentModule()->checkConformance(
-        errorCodeType, errorCodeProtocol);
+    auto conformance = checkConformance(errorCodeType, errorCodeProtocol);
     if (conformance && toErrorExistential) {
       Type errorType =
           conformance
@@ -3436,7 +3434,7 @@ bool ContextualFailure::tryProtocolConformanceFixIt(
   SmallVector<std::string, 8> missingProtoTypeStrings;
   SmallVector<ProtocolDecl *, 8> missingProtocols;
   for (auto protocol : layout.getProtocols()) {
-    if (!getParentModule()->checkConformance(fromType, protocol)) {
+    if (!checkConformance(fromType, protocol)) {
       auto protoTy = protocol->getDeclaredInterfaceType();
       missingProtoTypeStrings.push_back(protoTy->getString());
       missingProtocols.push_back(protocol);
@@ -3474,11 +3472,6 @@ bool ContextualFailure::tryProtocolConformanceFixIt(
     auto nameEndLoc = Lexer::getLocForEndOfToken(getASTContext().SourceMgr,
                                                  nominal->getNameLoc());
     conformanceDiag.fixItInsert(nameEndLoc, ": " + protoString);
-  }
-
-  // Emit fix-its to insert requirement stubs if we're in editor mode.
-  if (!getASTContext().LangOpts.DiagnosticsEditorMode) {
-    return true;
   }
 
   {
@@ -4230,7 +4223,7 @@ findImportedCaseWithMatchingSuffix(Type instanceTy, DeclNameRef name) {
 
     // Is one more available than the other?
     WORSE(->getAttrs().isUnavailable(ctx));
-    WORSE(->getAttrs().getDeprecated(ctx));
+    WORSE(->getAttrs().isDeprecated(ctx));
 
     // Does one have a shorter name (so the non-matching prefix is shorter)?
     WORSE(->getName().getBaseName().userFacingName().size());
@@ -6189,11 +6182,12 @@ bool InaccessibleMemberFailure::diagnoseAsError() {
   }
 
   auto loc = nameLoc.isValid() ? nameLoc.getStartLoc() : ::getLoc(anchor);
-  auto accessLevel = Member->getFormalAccessScope().accessLevelForDiagnostics();
-  if (accessLevel == AccessLevel::Public &&
-      diagnoseMissingImportForMember(Member, getDC(), loc))
+  if (IsMissingImport) {
+    maybeDiagnoseMissingImportForMember(Member, getDC(), loc);
     return true;
+  }
 
+  auto accessLevel = Member->getFormalAccessScope().accessLevelForDiagnostics();
   if (auto *CD = dyn_cast<ConstructorDecl>(Member)) {
     emitDiagnosticAt(loc, diag::init_candidate_inaccessible,
                      CD->getResultInterfaceType(), accessLevel)
@@ -6504,6 +6498,13 @@ bool MissingContextualConformanceFailure::diagnoseAsError() {
     case ConstraintLocator::SequenceElementType: {
       diagnostic = diag::cannot_convert_sequence_element_protocol;
       break;
+    }
+
+    case ConstraintLocator::EnumPatternImplicitCastMatch: {
+      emitDiagnostic(diag::pattern_does_not_conform_to_match, getFromType(),
+                     getToType())
+          .highlight(getSourceRange());
+      return true;
     }
 
     default:
@@ -7918,6 +7919,28 @@ bool NonEphemeralConversionFailure::diagnoseAsError() {
   return true;
 }
 
+bool SendingMismatchFailure::diagnoseAsError() {
+  if (getLocator()->getLastElementAs<LocatorPathElt::FunctionArgument>())
+    return diagnoseArgFailure();
+  return diagnoseResultFailure();
+}
+
+bool SendingMismatchFailure::diagnoseArgFailure() {
+  emitDiagnostic(diag::sending_function_wrong_sending, getFromType(),
+                 getToType())
+      .warnUntilSwiftVersion(6);
+  emitDiagnostic(diag::sending_function_param_with_sending_param_note);
+  return true;
+}
+
+bool SendingMismatchFailure::diagnoseResultFailure() {
+  emitDiagnostic(diag::sending_function_wrong_sending, getFromType(),
+                 getToType())
+      .warnUntilSwiftVersion(6);
+  emitDiagnostic(diag::sending_function_result_with_sending_param_note);
+  return true;
+}
+
 bool AssignmentTypeMismatchFailure::diagnoseMissingConformance() const {
   auto srcType = getFromType();
   auto dstType = getToType()->lookThroughAllOptionalTypes();
@@ -8648,7 +8671,21 @@ bool MissingContextualTypeForNil::diagnoseAsError() {
   return true;
 }
 
+bool InvalidPlaceholderFailure::diagnoseAsError() {
+  auto elt = getLocator()->castLastElementTo<LocatorPathElt::PlaceholderType>();
+  emitDiagnosticAt(elt.getPlaceholderRepr()->getLoc(),
+                   diag::placeholder_type_not_allowed);
+  return true;
+}
+
 bool CouldNotInferPlaceholderType::diagnoseAsError() {
+  // When placeholder type appears in an editor placeholder i.e.
+  // `<#T##() -> _#>` we rely on the parser to produce a diagnostic
+  // about editor placeholder and glance over all placeholder type
+  // inference issues.
+  if (isExpr<EditorPlaceholderExpr>(getAnchor()))
+    return true;
+
   // If this placeholder was explicitly written out by the user, they can maybe
   // fix things by specifying an actual type.
   if (auto *typeExpr = getAsExpr<TypeExpr>(getAnchor())) {
@@ -8658,12 +8695,13 @@ bool CouldNotInferPlaceholderType::diagnoseAsError() {
     }
   }
 
-  // When placeholder type appears in an editor placeholder i.e.
-  // `<#T##() -> _#>` we rely on the parser to produce a diagnostic
-  // about editor placeholder and glance over all placeholder type
-  // inference issues.
-  if (isExpr<EditorPlaceholderExpr>(getAnchor()))
+  // Also check for a placeholder path element.
+  auto *loc = getLocator();
+  if (auto elt = loc->getLastElementAs<LocatorPathElt::PlaceholderType>()) {
+    emitDiagnosticAt(elt->getPlaceholderRepr()->getLoc(),
+                     diag::could_not_infer_placeholder);
     return true;
+  }
 
   return false;
 }
@@ -9041,14 +9079,16 @@ bool CheckedCastToUnrelatedFailure::diagnoseAsError() {
   const auto fromType = getFromType();
   const auto toType = getToType();
   auto *sub = CastExpr->getSubExpr()->getSemanticsProvidingExpr();
-  // FIXME(https://github.com/apple/swift/issues/54529): This literal diagnostics needs to be revisited by a proposal to unify casting semantics for literals.
+  // FIXME(https://github.com/apple/swift/issues/54529): This literal
+  // diagnostics needs to be revisited by a proposal to unify casting
+  // semantics for literals.
   auto &ctx = getASTContext();
-  auto *dc = getDC();
+
   if (isa<LiteralExpr>(sub)) {
     auto *protocol = TypeChecker::getLiteralProtocol(ctx, sub);
     // Special handle for literals conditional checked cast when they can
     // be statically coerced to the cast type.
-    if (protocol && dc->getParentModule()->checkConformance(toType, protocol)) {
+    if (protocol && checkConformance(toType, protocol)) {
       emitDiagnostic(diag::literal_conditional_downcast_to_coercion, fromType,
                      toType);
       return true;
@@ -9086,7 +9126,7 @@ bool InvalidWeakAttributeUse::diagnoseAsError() {
                        ReferenceOwnership::Weak, varType);
 
   auto typeRange = var->getTypeSourceRangeForDiagnostics();
-  if (varType->hasSimpleTypeRepr()) {
+  if (varType->lookThroughSingleOptionalType()->hasSimpleTypeRepr()) {
     diagnostic.fixItInsertAfter(typeRange.End, "?");
   } else {
     diagnostic.fixItInsert(typeRange.Start, "(")
@@ -9315,7 +9355,17 @@ bool InvalidMemberReferenceWithinInitAccessor::diagnoseAsError() {
 }
 
 bool ConcreteTypeSpecialization::diagnoseAsError() {
-  emitDiagnostic(diag::not_a_generic_type, ConcreteType);
+  if (isa<MacroDecl>(Decl)) {
+    emitDiagnostic(diag::not_a_generic_macro, Decl);
+  } else {
+    emitDiagnostic(diag::not_a_generic_type, ConcreteType);
+  }
+  return true;
+}
+
+bool GenericFunctionSpecialization::diagnoseAsError() {
+  emitDiagnostic(diag::cannot_explicitly_specialize_generic_function);
+  emitDiagnosticAt(Decl, diag::decl_declared_here, Decl);
   return true;
 }
 

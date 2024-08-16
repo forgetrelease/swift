@@ -18,6 +18,7 @@
 #include "swift/AST/Decl.h"
 #include "swift/AST/GenericSignature.h"
 #include "swift/AST/SubstitutionMap.h"
+#include "swift/Basic/Assertions.h"
 #include "swift/SIL/SILBuilder.h"
 #include "swift/SIL/SILLinkage.h"
 #include "swift/SIL/SILMoveOnlyDeinit.h"
@@ -118,9 +119,15 @@ void SILGenFunction::emitDestroyingDestructor(DestructorDecl *dd) {
     SILValue baseSelf = B.createUpcast(cleanupLoc, selfValue, baseSILTy);
     ManagedValue dtorValue;
     SILType dtorTy;
+
     auto subMap
-      = superclassTy->getContextSubstitutionMap(SGM.M.getSwiftModule(),
-                                                superclass);
+      = superclassTy->getContextSubstitutionMap(superclass);
+
+    // We completely drop the generic signature if all generic parameters were
+    // concrete.
+    if (subMap && subMap.getGenericSignature()->areAllParamsConcrete())
+      subMap = SubstitutionMap();
+
     std::tie(dtorValue, dtorTy)
       = emitSiblingMethodRef(cleanupLoc, baseSelf, dtorConstant, subMap);
 
@@ -191,12 +198,11 @@ void SILGenFunction::emitDeallocatingClassDestructor(DestructorDecl *dd) {
   // Form a reference to the destroying destructor.
   SILDeclRef dtorConstant(dd, SILDeclRef::Kind::Destroyer);
   auto classTy = initialSelfValue->getType();
-  auto classDecl = classTy.getASTType()->getAnyNominal();
+
+  auto subMap = F.getForwardingSubstitutionMap();
+
   ManagedValue dtorValue;
   SILType dtorTy;
-  auto subMap = classTy.getASTType()
-    ->getContextSubstitutionMap(SGM.M.getSwiftModule(),
-                                classDecl);
   std::tie(dtorValue, dtorTy)
     = emitSiblingMethodRef(loc, initialSelfValue, dtorConstant, subMap);
 
@@ -628,8 +634,7 @@ void SILGenFunction::emitObjCDestructor(SILDeclRef dtor) {
   assert(superSelf->getOwnershipKind() == OwnershipKind::Owned);
 
   auto subMap
-    = superclassTy->getContextSubstitutionMap(SGM.M.getSwiftModule(),
-                                              superclass);
+    = superclassTy->getContextSubstitutionMap(superclass);
 
   B.createApply(cleanupLoc, superclassDtorValue, subMap, superSelf);
 

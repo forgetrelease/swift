@@ -599,20 +599,18 @@ public:
   /// NOTE: Please do not use this directly! It is only meant to be used by the
   /// optimizer pass: SILMoveOnlyWrappedTypeEliminator.
   bool unsafelyEliminateMoveOnlyWrapper(const SILFunction *fn) {
-    if (!Type.isMoveOnlyWrapped() && !Type.isBoxedMoveOnlyWrappedType(fn))
+    if (!Type.hasAnyMoveOnlyWrapping(fn))
       return false;
-    if (Type.isMoveOnlyWrapped()) {
-      Type = Type.removingMoveOnlyWrapper();
-    } else {
-      assert(Type.isBoxedMoveOnlyWrappedType(fn));
-      Type = Type.removingMoveOnlyWrapperToBoxedType(fn);
-    }
+    Type = Type.removingAnyMoveOnlyWrapping(fn);
     return true;
   }
 
   /// Returns true if this value should be traced for optimization debugging
   /// (it has a debug_value [trace] user).
   bool hasDebugTrace() const;
+
+  /// Does this SILValue begin a VarDecl scope? Only true in OSSA.
+  bool isFromVarDecl();
 
   static bool classof(SILNodePointer node) {
     return node->getKind() >= SILNodeKind::First_ValueBase &&

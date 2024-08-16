@@ -37,6 +37,7 @@
 #include "swift/AST/Stmt.h"
 #include "swift/AST/TypeCheckRequests.h"
 #include "swift/AST/TypeRepr.h"
+#include "swift/Basic/Assertions.h"
 #include "swift/Basic/SourceManager.h"
 #include "swift/Subsystems.h"
 #include "llvm/ADT/SmallBitVector.h"
@@ -845,6 +846,21 @@ public:
       OpaqueValues.erase(expr->getInterpolationExpr());
     }
 
+    bool shouldVerify(PropertyWrapperValuePlaceholderExpr *expr) {
+      if (!shouldVerify(cast<Expr>(expr)))
+        return false;
+
+      assert(expr->getOpaqueValuePlaceholder());
+      assert(!OpaqueValues.count(expr->getOpaqueValuePlaceholder()));
+      OpaqueValues[expr->getOpaqueValuePlaceholder()] = 0;
+      return true;
+    }
+
+    void cleanup(PropertyWrapperValuePlaceholderExpr *expr) {
+      assert(OpaqueValues.count(expr->getOpaqueValuePlaceholder()));
+      OpaqueValues.erase(expr->getOpaqueValuePlaceholder());
+    }
+
     void pushLocalGenerics(GenericEnvironment *env) {
       assert(LocalGenerics.count(env)==0);
       LocalGenerics.insert(env);
@@ -999,7 +1015,8 @@ public:
         PrettyStackTraceDecl debugStack("verifying access", D);
         if (!D->getASTContext().isAccessControlDisabled()) {
           if (D->getFormalAccessScope().isPublic() &&
-              D->getFormalAccess() < AccessLevel::Public) {
+              D->getFormalAccess() < AccessLevel::Public &&
+              !D->isInterfacePackageEffectivelyPublic()) {
             Out << "non-public decl has no formal access scope\n";
             D->dump(Out);
             abort();
@@ -2287,7 +2304,7 @@ public:
       }
       verifyCheckedBase(E);
     }
-    
+
     void verifyChecked(MakeTemporarilyEscapableExpr *E) {
       PrettyStackTraceExpr debugStack(
         Ctx, "verifying MakeTemporarilyEscapableExpr", E);

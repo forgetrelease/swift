@@ -24,6 +24,7 @@
 #include "swift/AST/ParameterList.h"
 #include "swift/AST/PropertyWrappers.h"
 #include "swift/AST/SynthesizedFileUnit.h"
+#include "swift/Basic/Assertions.h"
 #include "swift/Basic/Defer.h"
 #include "swift/ClangImporter/ClangModule.h"
 #include "swift/SIL/FormalLinkage.h"
@@ -810,6 +811,7 @@ public:
                   V.Ctx.getOpts().WitnessMethodElimination} {}
 
         void addMethod(SILDeclRef declRef) {
+          // TODO: alternatively maybe prevent adding distributed thunk here rather than inside those?
           if (Resilient || WitnessMethodElimination) {
             Visitor.addDispatchThunk(declRef);
             Visitor.addMethodDescriptor(declRef);

@@ -17,6 +17,7 @@
 
 #include "swift/AST/DiagnosticsFrontend.h"
 #include "swift/AST/SILOptions.h"
+#include "swift/Basic/Assertions.h"
 #include "swift/Basic/FileTypes.h"
 #include "swift/Basic/InitializeSwiftModules.h"
 #include "swift/Basic/LLVMInitialize.h"
@@ -287,6 +288,10 @@ struct SILOptOptions {
   llvm::cl::opt<bool>
   EnableAsyncDemotion = llvm::cl::opt<bool>("enable-async-demotion",
                     llvm::cl::desc("Enables an optimization pass to demote async functions."));
+
+  llvm::cl::opt<bool>
+  EnableThrowsPrediction = llvm::cl::opt<bool>("enable-throws-prediction",
+                     llvm::cl::desc("Enables optimization assumption that functions rarely throw errors."));
 
   llvm::cl::opt<bool>
   EnableMoveInoutStackProtection = llvm::cl::opt<bool>("enable-move-inout-stack-protector",
@@ -571,11 +576,6 @@ struct SILOptOptions {
       "Xcc",
       llvm::cl::desc("option to pass to clang"));
 
-  llvm::cl::opt<bool> DisableRegionBasedIsolationWithStrictConcurrency =
-      llvm::cl::opt<bool>(
-          "disable-region-based-isolation-with-strict-concurrency",
-          llvm::cl::init(false));
-
   llvm::cl::opt<std::string> SwiftVersionString = llvm::cl::opt<std::string>(
       "swift-version",
       llvm::cl::desc(
@@ -789,8 +789,7 @@ int sil_opt_main(ArrayRef<const char *> argv, void *MainAddr) {
 
   // If we have strict concurrency set as a feature and were told to turn off
   // region based isolation... do so now.
-  if (Invocation.getLangOptions().hasFeature(Feature::StrictConcurrency) &&
-      !options.DisableRegionBasedIsolationWithStrictConcurrency) {
+  if (Invocation.getLangOptions().hasFeature(Feature::StrictConcurrency)) {
     Invocation.getLangOptions().enableFeature(Feature::RegionBasedIsolation);
   }
 
@@ -852,6 +851,7 @@ int sil_opt_main(ArrayRef<const char *> argv, void *MainAddr) {
 
   SILOpts.EnableSpeculativeDevirtualization = options.EnableSpeculativeDevirtualization;
   SILOpts.EnableAsyncDemotion = options.EnableAsyncDemotion;
+  SILOpts.EnableThrowsPrediction = options.EnableThrowsPrediction;
   SILOpts.IgnoreAlwaysInline = options.IgnoreAlwaysInline;
   SILOpts.EnableOSSAModules = options.EnableOSSAModules;
   SILOpts.EnableSILOpaqueValues = options.EnableSILOpaqueValues;

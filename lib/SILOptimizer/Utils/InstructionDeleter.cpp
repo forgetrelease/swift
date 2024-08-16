@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "swift/SILOptimizer/Utils/InstructionDeleter.h"
+#include "swift/Basic/Assertions.h"
 #include "swift/SIL/SILFunction.h"
 #include "swift/SIL/Test.h"
 #include "swift/SILOptimizer/Utils/ConstExpr.h"
@@ -334,7 +335,7 @@ namespace swift::test {
 // Dumps:
 // - the function
 static FunctionTest DeleterDeleteIfDeadTest(
-    "deleter-delete-if-dead", [](auto &function, auto &arguments, auto &test) {
+    "deleter_delete_if_dead", [](auto &function, auto &arguments, auto &test) {
       auto *inst = arguments.takeInstruction();
       InstructionDeleter deleter;
       llvm::outs() << "Deleting-if-dead " << *inst;

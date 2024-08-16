@@ -192,6 +192,27 @@ FutureFragment::Status AsyncTask::waitFuture(AsyncTask *waitingTask,
   }
 }
 
+// Implemented in Swift because we need to obtain the user-defined flags on the executor ref.
+//
+// We could inline this with effort, though.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wreturn-type-c-linkage"
+extern "C" SWIFT_CC(swift)
+TaskExecutorRef _task_taskExecutor_getTaskExecutorRef(
+    HeapObject *executor, const Metadata *selfType,
+    const TaskExecutorWitnessTable *wtable);
+#pragma clang diagnostic pop
+
+TaskExecutorRef
+InitialTaskExecutorOwnedPreferenceTaskOptionRecord::getExecutorRefFromUnownedTaskExecutor() const {
+  TaskExecutorRef executorRef = _task_taskExecutor_getTaskExecutorRef(
+      Identity,
+      /*selfType=*/swift_getObjectType(Identity),
+      /*wtable=*/WitnessTable);
+    return executorRef;
+}
+
+
 void NullaryContinuationJob::process(Job *_job) {
   auto *job = cast<NullaryContinuationJob>(_job);
 
@@ -348,9 +369,14 @@ static SerialExecutorRef executorForEnqueuedJob(Job *job) {
   void *jobQueue = job->SchedulerPrivate[Job::DispatchQueueIndex];
   if (jobQueue == DISPATCH_QUEUE_GLOBAL_EXECUTOR) {
     return SerialExecutorRef::generic();
-  } else
-    return SerialExecutorRef::forOrdinary(reinterpret_cast<HeapObject*>(jobQueue),
-                    _swift_task_getDispatchQueueSerialExecutorWitnessTable());
+  }
+
+  if (auto identity = reinterpret_cast<HeapObject *>(jobQueue)) {
+    return SerialExecutorRef::forOrdinary(
+        identity, _swift_task_getDispatchQueueSerialExecutorWitnessTable());
+  }
+
+  return SerialExecutorRef::generic();
 #endif
 }
 
@@ -652,6 +678,7 @@ swift_task_create_commonImpl(size_t rawTaskCreateFlags,
   // Collect the options we know about.
   SerialExecutorRef serialExecutor = SerialExecutorRef::generic();
   TaskExecutorRef taskExecutor = TaskExecutorRef::undefined();
+  bool taskExecutorIsOwned = false;
   TaskGroup *group = nullptr;
   AsyncLet *asyncLet = nullptr;
   bool hasAsyncLetResultBuffer = false;
@@ -663,10 +690,22 @@ swift_task_create_commonImpl(size_t rawTaskCreateFlags,
                           ->getExecutorRef();
       break;
 
-    case TaskOptionRecordKind::InitialTaskExecutor:
-      taskExecutor = cast<InitialTaskExecutorPreferenceTaskOptionRecord>(option)
+    case TaskOptionRecordKind::InitialTaskExecutorUnowned:
+      taskExecutor = cast<InitialTaskExecutorRefPreferenceTaskOptionRecord>(option)
                          ->getExecutorRef();
       jobFlags.task_setHasInitialTaskExecutorPreference(true);
+      taskExecutorIsOwned = false;
+      break;
+
+    case TaskOptionRecordKind::InitialTaskExecutorOwned:
+      #if SWIFT_CONCURRENCY_EMBEDDED
+      swift_unreachable("owned TaskExecutor cannot be used in embedded Swift");
+      #else
+      taskExecutor = cast<InitialTaskExecutorOwnedPreferenceTaskOptionRecord>(option)
+                         ->getExecutorRefFromUnownedTaskExecutor();
+      taskExecutorIsOwned = true;
+      jobFlags.task_setHasInitialTaskExecutorPreference(true);
+      #endif
       break;
 
     case TaskOptionRecordKind::TaskGroup:
@@ -1078,7 +1117,8 @@ swift_task_create_commonImpl(size_t rawTaskCreateFlags,
     // Implementation note: we must do this AFTER `swift_taskGroup_attachChild`
     // because the group takes a fast-path when attaching the child record.
     assert(jobFlags.task_hasInitialTaskExecutorPreference());
-    task->pushInitialTaskExecutorPreference(taskExecutor);
+    task->pushInitialTaskExecutorPreference(
+        taskExecutor, /*owned=*/taskExecutorIsOwned);
   }
 
   // If we're supposed to enqueue the task, do so now.
@@ -1121,7 +1161,9 @@ void swift::swift_task_run_inline(OpaqueValue *result, void *closureAFP,
   }
 
   ResultTypeInfo futureResultType;
+#if !SWIFT_CONCURRENCY_EMBEDDED
   futureResultType.metadata = futureResultTypeMetadata;
+#endif
 
   // Unpack the asynchronous function pointer.
   FutureAsyncSignature::FunctionType *closure;
@@ -1154,7 +1196,7 @@ void swift::swift_task_run_inline(OpaqueValue *result, void *closureAFP,
   size_t taskCreateFlags = 1 << TaskCreateFlags::Task_IsInlineTask;
 
   auto taskAndContext = swift_task_create_common(
-      taskCreateFlags, &option, futureResultType.metadata,
+      taskCreateFlags, &option, futureResultTypeMetadata,
       reinterpret_cast<TaskContinuationFunction *>(closure), closureContext,
       /*initialContextSize=*/closureContextSize);
 
@@ -1355,7 +1397,7 @@ enum class State : uint8_t { Uninitialized, On, Off };
 static std::atomic<State> CurrentState;
 
 static LazyMutex ActiveContinuationsLock;
-static Lazy<std::unordered_set<ContinuationAsyncContext *>> ActiveContinuations;
+static Lazy<std::unordered_set<AsyncTask *>> ActiveContinuations;
 
 static bool isEnabled() {
   auto state = CurrentState.load(std::memory_order_relaxed);
@@ -1368,31 +1410,32 @@ static bool isEnabled() {
   return state == State::On;
 }
 
-static void init(ContinuationAsyncContext *context) {
+static void init(AsyncTask *task) {
   if (!isEnabled())
     return;
 
   LazyMutex::ScopedLock guard(ActiveContinuationsLock);
-  auto result = ActiveContinuations.get().insert(context);
+  auto result = ActiveContinuations.get().insert(task);
   auto inserted = std::get<1>(result);
   if (!inserted)
     swift_Concurrency_fatalError(
         0,
-        "Initializing continuation context %p that was already initialized.\n",
-        context);
+        "Initializing continuation for task %p that was already initialized.\n",
+        task);
 }
 
-static void willResume(ContinuationAsyncContext *context) {
+static void willResume(AsyncTask *task) {
   if (!isEnabled())
     return;
 
   LazyMutex::ScopedLock guard(ActiveContinuationsLock);
-  auto removed = ActiveContinuations.get().erase(context);
+  auto removed = ActiveContinuations.get().erase(task);
   if (!removed)
-    swift_Concurrency_fatalError(0,
-                      "Resuming continuation context %p that was not awaited "
-                      "(may have already been resumed).\n",
-                      context);
+    swift_Concurrency_fatalError(
+        0,
+        "Resuming continuation for task %p that is not awaited "
+        "(may have already been resumed).\n",
+        task);
 }
 
 } // namespace continuationChecking
@@ -1400,7 +1443,6 @@ static void willResume(ContinuationAsyncContext *context) {
 SWIFT_CC(swift)
 static AsyncTask *swift_continuation_initImpl(ContinuationAsyncContext *context,
                                               AsyncContinuationFlags flags) {
-  continuationChecking::init(context);
   context->Flags = ContinuationAsyncContext::FlagsType();
   if (flags.canThrow()) context->Flags.setCanThrow(true);
   if (flags.isExecutorSwitchForced())
@@ -1437,6 +1479,7 @@ static AsyncTask *swift_continuation_initImpl(ContinuationAsyncContext *context,
   task->ResumeContext = context;
   task->ResumeTask = context->ResumeParent;
 
+  continuationChecking::init(task);
   concurrency::trace::task_continuation_init(task, context);
 
   return task;
@@ -1551,8 +1594,6 @@ static void swift_continuation_awaitImpl(ContinuationAsyncContext *context) {
 
 static void resumeTaskAfterContinuation(AsyncTask *task,
                                         ContinuationAsyncContext *context) {
-  continuationChecking::willResume(context);
-
   auto &sync = context->AwaitSynchronization;
 
   auto status = sync.load(std::memory_order_acquire);
@@ -1602,6 +1643,7 @@ static void resumeTaskAfterContinuation(AsyncTask *task,
 
 SWIFT_CC(swift)
 static void swift_continuation_resumeImpl(AsyncTask *task) {
+  continuationChecking::willResume(task);
   auto context = static_cast<ContinuationAsyncContext*>(task->ResumeContext);
   concurrency::trace::task_continuation_resume(context, false);
   resumeTaskAfterContinuation(task, context);
@@ -1609,6 +1651,7 @@ static void swift_continuation_resumeImpl(AsyncTask *task) {
 
 SWIFT_CC(swift)
 static void swift_continuation_throwingResumeImpl(AsyncTask *task) {
+  continuationChecking::willResume(task);
   auto context = static_cast<ContinuationAsyncContext*>(task->ResumeContext);
   concurrency::trace::task_continuation_resume(context, false);
   resumeTaskAfterContinuation(task, context);
@@ -1618,6 +1661,7 @@ static void swift_continuation_throwingResumeImpl(AsyncTask *task) {
 SWIFT_CC(swift)
 static void swift_continuation_throwingResumeWithErrorImpl(AsyncTask *task,
                                                 /* +1 */ SwiftError *error) {
+  continuationChecking::willResume(task);
   auto context = static_cast<ContinuationAsyncContext*>(task->ResumeContext);
   concurrency::trace::task_continuation_resume(context, true);
   context->ErrorResult = error;

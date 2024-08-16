@@ -16,9 +16,11 @@
 
 #define DEBUG_TYPE "sil-existential-transform"
 #include "ExistentialTransform.h"
+#include "swift/AST/ConformanceLookup.h"
 #include "swift/AST/ExistentialLayout.h"
 #include "swift/AST/GenericEnvironment.h"
 #include "swift/AST/TypeCheckRequests.h"
+#include "swift/Basic/Assertions.h"
 #include "swift/SIL/OptimizationRemark.h"
 #include "swift/SIL/SILFunction.h"
 #include "swift/SIL/SILInstruction.h"
@@ -168,9 +170,8 @@ void ExistentialSpecializerCloner::cloneArguments(
     SILType ExistentialType = ArgDesc.Arg->getType().getObjectType();
     CanType OpenedType = NewArg->getType().getASTType();
     assert(!OpenedType.isAnyExistentialType());
-    auto Conformances = M.getSwiftModule()->collectExistentialConformances(
-        OpenedType,
-        ExistentialType.getASTType());
+    auto Conformances = collectExistentialConformances(
+        OpenedType, ExistentialType.getASTType());
 
     auto ExistentialRepr =
         ArgDesc.Arg->getType().getPreferredExistentialRepresentation();
@@ -636,7 +637,7 @@ void ExistentialTransform::createExistentialSpecializedFunction() {
       [&](SubstitutableType *type) -> Type {
         return NewFGenericEnv->mapTypeIntoContext(type);
       },
-      LookUpConformanceInModule(F->getModule().getSwiftModule()));
+      LookUpConformanceInModule());
     ExistentialSpecializerCloner cloner(F, NewF, Subs, ArgumentDescList,
                                         ArgToGenericTypeMap,
                                         ExistentialArgDescriptor);

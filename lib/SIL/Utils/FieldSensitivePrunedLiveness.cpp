@@ -14,6 +14,7 @@
 
 #include "swift/SIL/FieldSensitivePrunedLiveness.h"
 #include "swift/AST/TypeExpansionContext.h"
+#include "swift/Basic/Assertions.h"
 #include "swift/Basic/Defer.h"
 #include "swift/Basic/SmallBitVector.h"
 #include "swift/SIL/BasicBlockDatastructures.h"
@@ -161,6 +162,12 @@ SubElementOffset::computeForAddress(SILValue projectionDerivedFromRoot,
     if (auto *oea =
             dyn_cast<OpenExistentialAddrInst>(projectionDerivedFromRoot)) {
       projectionDerivedFromRoot = oea->getOperand();
+      continue;
+    }
+
+    if (auto *iea =
+            dyn_cast<InitExistentialAddrInst>(projectionDerivedFromRoot)) {
+      projectionDerivedFromRoot = iea->getOperand();
       continue;
     }
 
@@ -1205,7 +1212,7 @@ namespace swift::test {
 // locations. In that case, the def nodes may be stores and the uses may be
 // destroy_addrs.
 static FunctionTest FieldSensitiveMultiDefUseLiveRangeTest(
-    "fieldsensitive-multidefuse-liverange",
+    "fieldsensitive_multidefuse_liverange",
     [](auto &function, auto &arguments, auto &test) {
       SmallVector<SILBasicBlock *, 8> discoveredBlocks;
       auto value = arguments.takeValue();

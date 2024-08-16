@@ -250,6 +250,16 @@ public:
   /// If we haven't explicitly passed -blocklist-paths, set it to the default value.
   void setDefaultBlocklistsIfNecessary();
 
+  /// If we haven't explicitly passed '-in-process-plugin-server-path', infer
+  /// it as a default value.
+  ///
+  /// FIXME: Remove this after all the clients start sending it.
+  void setDefaultInProcessPluginServerPathIfNecessary();
+
+  /// Determine which C++ stdlib should be used for this compilation, and which
+  /// C++ stdlib is the default for the specified target.
+  void computeCXXStdlibOptions();
+
   /// Computes the runtime resource path relative to the given Swift
   /// executable.
   static void computeRuntimeResourcePathFromExecutablePath(

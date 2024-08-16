@@ -81,7 +81,8 @@ add_swift_target_library(swiftDarwin ${SWIFT_STDLIB_LIBRARY_BUILD_TYPES}
 if(SWIFT_SHOULD_BUILD_EMBEDDED_STDLIB)
   set(SWIFT_ENABLE_REFLECTION OFF)
 
-  add_custom_target(embedded-darwin ALL)
+  add_custom_target(embedded-darwin)
+  add_dependencies(embedded-libraries embedded-darwin)
   foreach(entry ${EMBEDDED_STDLIB_TARGET_TRIPLES})
     string(REGEX REPLACE "[ \t]+" ";" list "${entry}")
     list(GET list 0 arch)
@@ -472,6 +473,24 @@ if("ANDROID" IN_LIST SWIFT_SDKS)
                                  COMPONENT sdk-overlay)
     endif()
   endforeach()
+
+  set(android_posix_filesystem_apinotes_source "posix_filesystem.apinotes")
+  set(apinotes_subdir "${SWIFTLIB_DIR}/apinotes")
+  add_custom_command_target(
+    copy_android_posix_filesystem_apinotes_resource
+    COMMAND
+      "${CMAKE_COMMAND}" "-E" "make_directory" ${apinotes_subdir}
+    COMMAND
+      "${CMAKE_COMMAND}" "-E" "copy_if_different"
+        "${CMAKE_CURRENT_SOURCE_DIR}/${android_posix_filesystem_apinotes_source}" ${apinotes_subdir}
+    OUTPUT ${apinotes_subdir}/${android_posix_filesystem_apinotes_source}
+    COMMENT "Copying Android posix_filesystem API notes to resource directories")
+  add_dependencies(sdk-overlay ${copy_android_posix_filesystem_apinotes_resource})
+  list(APPEND android_modulemap_target_list ${copy_android_posix_filesystem_apinotes_resource})
+  swift_install_in_component(FILES
+                              "${android_posix_filesystem_apinotes_source}"
+                             DESTINATION "lib/swift/apinotes"
+                             COMPONENT sdk-overlay)
 endif()
 add_custom_target(android_modulemap DEPENDS ${android_modulemap_target_list})
 set_property(TARGET android_modulemap PROPERTY FOLDER "Miscellaneous")

@@ -14,6 +14,7 @@
 
 #include "swift/AST/ASTWalker.h"
 #include "swift/AST/Expr.h"
+#include "swift/Basic/Assertions.h"
 #include "swift/SIL/ApplySite.h"
 #include "swift/SIL/InstructionUtils.h"
 #include "swift/SIL/PatternMatch.h"
@@ -30,7 +31,16 @@ using namespace swift::PartitionPrimitives;
 //                               MARK: Logging
 //===----------------------------------------------------------------------===//
 
-#ifndef NDEBUG
+bool swift::PartitionPrimitives::REGIONBASEDISOLATION_ENABLE_LOGGING;
+
+static llvm::cl::opt<bool, true> // The parser
+    RegionBasedIsolationLog(
+        "sil-regionbasedisolation-log",
+        llvm::cl::desc("Enable logging for SIL region based isolation "
+                       "diagnostics"),
+        llvm::cl::Hidden,
+        llvm::cl::location(
+            swift::PartitionPrimitives::REGIONBASEDISOLATION_ENABLE_LOGGING));
 
 bool swift::PartitionPrimitives::REGIONBASEDISOLATION_ENABLE_VERBOSE_LOGGING;
 
@@ -42,8 +52,6 @@ static llvm::cl::opt<bool, true> // The parser
         llvm::cl::Hidden,
         llvm::cl::location(swift::PartitionPrimitives::
                                REGIONBASEDISOLATION_ENABLE_VERBOSE_LOGGING));
-
-#endif
 
 //===----------------------------------------------------------------------===//
 //                             MARK: PartitionOp
@@ -96,6 +104,13 @@ void PartitionOp::print(llvm::raw_ostream &os, bool extraSpace) const {
   }
   case PartitionOpKind::UnknownPatternError:
     os << "unknown pattern error ";
+    os << "%%" << opArgs[0];
+    break;
+  case PartitionOpKind::RequireInOutSendingAtFunctionExit:
+    constexpr static char extraSpaceLiteral[10] = "     ";
+    os << "require_inout_sending_at_function_exit ";
+    if (extraSpace)
+      os << extraSpaceLiteral;
     os << "%%" << opArgs[0];
     break;
   }

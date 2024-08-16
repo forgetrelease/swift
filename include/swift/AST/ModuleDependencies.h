@@ -21,6 +21,7 @@
 #include "swift/AST/Import.h"
 #include "swift/AST/LinkLibrary.h"
 #include "swift/AST/SearchPathOptions.h"
+#include "swift/Basic/CXXStdlibKind.h"
 #include "swift/Basic/LLVM.h"
 #include "clang/CAS/CASOptions.h"
 #include "clang/Tooling/DependencyScanning/DependencyScanningService.h"
@@ -90,6 +91,12 @@ enum class ModuleDependencyKind : int8_t {
   LastKind = SwiftPlaceholder + 1
 };
 
+/// This is used to idenfity a specific macro plugin dependency.
+struct MacroPluginDependency {
+  std::string LibraryPath;
+  std::string ExecutablePath;
+};
+
 /// This is used to identify a specific module.
 struct ModuleDependencyID {
   std::string ModuleName;
@@ -129,7 +136,7 @@ void registerBackDeployLibraries(
     std::function<void(const LinkLibrary &)> RegistrationCallback);
 void registerCxxInteropLibraries(
     const llvm::Triple &Target, StringRef mainModuleName, bool hasStaticCxx,
-    bool hasStaticCxxStdlib,
+    bool hasStaticCxxStdlib, CXXStdlibKind cxxStdlibKind,
     std::function<void(const LinkLibrary &)> RegistrationCallback);
 } // namespace dependencies
 
@@ -246,6 +253,9 @@ struct CommonSwiftTextualModuleDependencyDetails {
   /// (Clang) modules on which the bridging header depends.
   std::vector<std::string> bridgingModuleDependencies;
 
+  /// The macro dependencies.
+  std::map<std::string, MacroPluginDependency> macroDependencies;
+
   /// The Swift frontend invocation arguments to build the Swift module from the
   /// interface.
   std::vector<std::string> buildCommandLine;
@@ -285,12 +295,16 @@ public:
   /// Details common to Swift textual (interface or source) modules
   CommonSwiftTextualModuleDependencyDetails textualModuleDetails;
 
+  /// The user module version of this textual module interface.
+  const std::string userModuleVersion;
+
   SwiftInterfaceModuleDependenciesStorage(
       StringRef moduleOutputPath, StringRef swiftInterfaceFile,
       ArrayRef<StringRef> compiledModuleCandidates,
       ArrayRef<StringRef> buildCommandLine, ArrayRef<LinkLibrary> linkLibraries,
       ArrayRef<StringRef> extraPCMArgs, StringRef contextHash, bool isFramework,
-      bool isStatic, StringRef RootID, StringRef moduleCacheKey)
+      bool isStatic, StringRef RootID, StringRef moduleCacheKey,
+      StringRef userModuleVersion)
       : ModuleDependencyInfoStorageBase(ModuleDependencyKind::SwiftInterface,
                                         linkLibraries, moduleCacheKey),
         moduleOutputPath(moduleOutputPath),
@@ -298,7 +312,8 @@ public:
         compiledModuleCandidates(compiledModuleCandidates.begin(),
                                  compiledModuleCandidates.end()),
         contextHash(contextHash), isFramework(isFramework), isStatic(isStatic),
-        textualModuleDetails(extraPCMArgs, buildCommandLine, RootID) {}
+        textualModuleDetails(extraPCMArgs, buildCommandLine, RootID),
+        userModuleVersion(userModuleVersion) {}
 
   ModuleDependencyInfoStorageBase *clone() const override {
     return new SwiftInterfaceModuleDependenciesStorage(*this);
@@ -310,6 +325,12 @@ public:
 
   void updateCommandLine(const std::vector<std::string> &newCommandLine) {
     textualModuleDetails.buildCommandLine = newCommandLine;
+  }
+
+  void addMacroDependency(StringRef macroModuleName, StringRef libraryPath,
+                          StringRef executablePath) {
+    textualModuleDetails.macroDependencies.insert(
+        {macroModuleName.str(), {libraryPath.str(), executablePath.str()}});
   }
 };
 
@@ -361,6 +382,12 @@ public:
   void addTestableImport(ImportPath::Module module) {
     testableImports.insert(module.front().Item.str());
   }
+
+  void addMacroDependency(StringRef macroModuleName, StringRef libraryPath,
+                          StringRef executablePath) {
+    textualModuleDetails.macroDependencies.insert(
+        {macroModuleName.str(), {libraryPath.str(), executablePath.str()}});
+  }
 };
 
 /// Describes the dependencies of a pre-built Swift module (with no
@@ -376,13 +403,16 @@ public:
       ArrayRef<ScannerImportStatementInfo> moduleImports,
       ArrayRef<ScannerImportStatementInfo> optionalModuleImports,
       ArrayRef<LinkLibrary> linkLibraries, StringRef headerImport,
-      bool isFramework, bool isStatic, StringRef moduleCacheKey)
+      StringRef definingModuleInterface, bool isFramework, bool isStatic,
+      StringRef moduleCacheKey, StringRef userModuleVersion)
       : ModuleDependencyInfoStorageBase(ModuleDependencyKind::SwiftBinary,
                                         moduleImports, optionalModuleImports,
                                         linkLibraries, moduleCacheKey),
         compiledModulePath(compiledModulePath), moduleDocPath(moduleDocPath),
         sourceInfoPath(sourceInfoPath), headerImport(headerImport),
-        isFramework(isFramework), isStatic(isStatic) {}
+        definingModuleInterfacePath(definingModuleInterface),
+        isFramework(isFramework), isStatic(isStatic),
+        userModuleVersion(userModuleVersion) {}
 
   ModuleDependencyInfoStorageBase *clone() const override {
     return new SwiftBinaryModuleDependencyStorage(*this);
@@ -400,6 +430,10 @@ public:
   /// The path of the .h dependency of this module.
   const std::string headerImport;
 
+  /// The path of the defining .swiftinterface that this
+  /// binary .swiftmodule was built from, if one exists.
+  const std::string definingModuleInterfacePath;
+
   /// Source files on which the header inputs depend.
   std::vector<std::string> headerSourceFiles;
 
@@ -411,6 +445,18 @@ public:
 
   /// A flag that indicates this dependency is associated with a static archive
   const bool isStatic;
+
+  /// The user module version of this binary module.
+  const std::string userModuleVersion;
+
+  /// Return the path to the defining .swiftinterface of this module
+  /// of one was determined. Otherwise, return the .swiftmodule path
+  /// itself.
+  std::string getDefiningModulePath() const {
+    if (definingModuleInterfacePath.empty())
+      return compiledModulePath;
+    return definingModuleInterfacePath;
+  }
 
   static bool classof(const ModuleDependencyInfoStorageBase *base) {
     return base->dependencyKind == ModuleDependencyKind::SwiftBinary;
@@ -552,12 +598,14 @@ public:
       ArrayRef<StringRef> compiledCandidates, ArrayRef<StringRef> buildCommands,
       ArrayRef<LinkLibrary> linkLibraries, ArrayRef<StringRef> extraPCMArgs,
       StringRef contextHash, bool isFramework, bool isStatic,
-      StringRef CASFileSystemRootID, StringRef moduleCacheKey) {
+      StringRef CASFileSystemRootID, StringRef moduleCacheKey,
+      StringRef userModuleVersion) {
     return ModuleDependencyInfo(
         std::make_unique<SwiftInterfaceModuleDependenciesStorage>(
             moduleOutputPath, swiftInterfaceFile, compiledCandidates,
             buildCommands, linkLibraries, extraPCMArgs, contextHash,
-            isFramework, isStatic, CASFileSystemRootID, moduleCacheKey));
+            isFramework, isStatic, CASFileSystemRootID, moduleCacheKey,
+            userModuleVersion));
   }
 
   /// Describe the module dependencies for a serialized or parsed Swift module.
@@ -567,12 +615,14 @@ public:
       ArrayRef<ScannerImportStatementInfo> moduleImports,
       ArrayRef<ScannerImportStatementInfo> optionalModuleImports,
       ArrayRef<LinkLibrary> linkLibraries, StringRef headerImport,
-      bool isFramework, bool isStatic, StringRef moduleCacheKey) {
+      StringRef definingModuleInterface, bool isFramework,
+      bool isStatic, StringRef moduleCacheKey, StringRef userModuleVer) {
     return ModuleDependencyInfo(
         std::make_unique<SwiftBinaryModuleDependencyStorage>(
             compiledModulePath, moduleDocPath, sourceInfoPath, moduleImports,
-            optionalModuleImports, linkLibraries, headerImport, isFramework,
-            isStatic, moduleCacheKey));
+            optionalModuleImports, linkLibraries, headerImport,
+            definingModuleInterface,isFramework, isStatic, moduleCacheKey,
+            userModuleVer));
   }
 
   /// Describe the main Swift module.
@@ -759,6 +809,10 @@ public:
   /// For a Source dependency, register a `Testable` import
   void addTestableImport(ImportPath::Module module);
 
+  /// For a Source/Textual dependency, register a macro dependency.
+  void addMacroDependency(StringRef macroModuleName, StringRef libraryPath,
+                          StringRef executablePath);
+
   /// Whether or not a queried module name is a `@Testable` import dependency
   /// of this module. Can only return `true` for Swift source modules.
   bool isTestableImport(StringRef moduleName) const;
@@ -941,6 +995,11 @@ class SwiftDependencyScanningService {
   /// File prefix mapper.
   std::unique_ptr<llvm::TreePathPrefixMapper> Mapper;
 
+  /// The global file system cache.
+  std::optional<
+      clang::tooling::dependencies::DependencyScanningFilesystemSharedCache>
+      SharedFilesystemCache;
+
   /// A map from a String representing the target triple of a scanner invocation
   /// to the corresponding cached dependencies discovered so far when using this
   /// triple.
@@ -952,7 +1011,7 @@ class SwiftDependencyScanningService {
   std::vector<std::string> AllContextHashes;
 
   /// Shared state mutual-exclusivity lock
-  llvm::sys::SmartMutex<true> ScanningServiceGlobalLock;
+  mutable llvm::sys::SmartMutex<true> ScanningServiceGlobalLock;
 
   /// Retrieve the dependencies map that corresponds to the given dependency
   /// kind.
@@ -969,6 +1028,19 @@ public:
   SwiftDependencyScanningService &
   operator=(const SwiftDependencyScanningService &) = delete;
   virtual ~SwiftDependencyScanningService() {}
+
+  /// Query the service's filesystem cache
+  clang::tooling::dependencies::DependencyScanningFilesystemSharedCache &getSharedCache() {
+    assert(SharedFilesystemCache && "Expected a shared cache");
+    return *SharedFilesystemCache;
+  }
+
+  /// Query the service's filesystem cache
+  clang::tooling::dependencies::DependencyScanningFilesystemSharedCache &
+  getSharedFilesystemCache() {
+    assert(SharedFilesystemCache && "Expected a shared cache");
+    return *SharedFilesystemCache;
+  }
 
   bool usingCachingFS() const { return !UseClangIncludeTree && (bool)CacheFS; }
   llvm::IntrusiveRefCntPtr<llvm::cas::CachingOnDiskFileSystem>

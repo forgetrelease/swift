@@ -21,7 +21,9 @@
 #include "SILGen.h"
 #include "Scope.h"
 #include "SwitchEnumBuilder.h"
+#include "swift/AST/ConformanceLookup.h"
 #include "swift/AST/DiagnosticsSIL.h"
+#include "swift/Basic/Assertions.h"
 #include "swift/Basic/ProfileCounter.h"
 #include "swift/SIL/BasicBlockUtils.h"
 #include "swift/SIL/AbstractionPatternGenerators.h"
@@ -323,7 +325,7 @@ void StmtEmitter::visitBraceStmt(BraceStmt *S) {
 
       // PatternBindingBecls represent local variable bindings that execute
       // as part of the function's execution.
-      if (!isa<PatternBindingDecl>(D)) {
+      if (!isa<PatternBindingDecl>(D) && !isa<VarDecl>(D)) {
         // Other decls define entities that may be used by the program, such as
         // local function declarations. So handle them here, before checking for
         // reachability, and then continue looping.
@@ -429,12 +431,9 @@ void StmtEmitter::visitBraceStmt(BraceStmt *S) {
       SGF.emitIgnoredExpr(E);
     } else {
       auto *D = ESD.get<Decl*>();
-
-      // Only PatternBindingDecls should be emitted here.
-      // Other decls were handled above.
-      auto PBD = cast<PatternBindingDecl>(D);
-
-      SGF.visit(PBD);
+      assert((isa<PatternBindingDecl>(D) || isa<VarDecl>(D)) &&
+             "other decls should be handled before the reachability check");
+      SGF.visit(D);
     }
   }
 }
@@ -1593,7 +1592,7 @@ void SILGenFunction::emitThrow(SILLocation loc, ManagedValue exnMV,
         SubstitutionMap subMap = SubstitutionMap::get(
             genericSig, [&](SubstitutableType *dependentType) {
               return exnMV.getType().getASTType();
-            }, LookUpConformanceInModule(getModule().getSwiftModule()));
+            }, LookUpConformanceInModule());
 
         // Generic errors are passed indirectly.
         if (!exnMV.getType().isAddress() && useLoweredAddresses()) {
@@ -1635,7 +1634,7 @@ void SILGenFunction::emitThrow(SILLocation loc, ManagedValue exnMV,
     assert(destErrorType == SILType::getExceptionType(getASTContext()));
 
     ProtocolConformanceRef conformances[1] = {
-      getModule().getSwiftModule()->checkConformance(
+      checkConformance(
         exn->getType().getASTType(), getASTContext().getErrorDecl())
     };
 

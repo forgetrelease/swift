@@ -22,6 +22,7 @@
 #include "SILGen.h"
 #include "SILGenBuilder.h"
 #include "swift/AST/AnyFunctionRef.h"
+#include "swift/Basic/Assertions.h"
 #include "swift/Basic/NoDiscard.h"
 #include "swift/Basic/ProfileCounter.h"
 #include "swift/Basic/Statistic.h"
@@ -727,6 +728,10 @@ public:
   /// This matches the type that `emitRValue` etc. are expected to produce
   /// without any contextual overrides.
   FunctionTypeInfo getFunctionTypeInfo(CanAnyFunctionType fnType);
+
+  /// A helper method that calls getFunctionTypeInfo that also marks global
+  /// actor isolated async closures that are not sendable as sendable.
+  FunctionTypeInfo getClosureTypeInfo(AbstractClosureExpr *expr);
 
   bool isEmittingTopLevelCode() { return IsEmittingTopLevelCode; }
   void stopEmittingTopLevelCode() { IsEmittingTopLevelCode = false; }
@@ -1586,7 +1591,19 @@ public:
   // Patterns
   //===--------------------------------------------------------------------===//
 
-  SILValue emitOSVersionRangeCheck(SILLocation loc, const VersionRange &range);
+  SILValue emitOSVersionRangeCheck(SILLocation loc, const VersionRange &range,
+                                   bool forTargetVariant = false);
+  SILValue
+  emitOSVersionOrVariantVersionRangeCheck(SILLocation loc,
+                                          const VersionRange &targetRange,
+                                          const VersionRange &variantRange);
+  /// Emits either a single OS version range check or an OS version & variant
+  /// version range check automatically, depending on the active target triple
+  /// and requested versions.
+  SILValue emitZipperedOSVersionRangeCheck(SILLocation loc,
+                                           const VersionRange &targetRange,
+                                           const VersionRange &variantRange);
+
   void emitStmtCondition(StmtCondition Cond, JumpDest FalseDest, SILLocation loc,
                          ProfileCounter NumTrueTaken = ProfileCounter(),
                          ProfileCounter NumFalseTaken = ProfileCounter());

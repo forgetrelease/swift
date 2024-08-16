@@ -27,6 +27,7 @@
 #include "swift/AST/Pattern.h"
 #include "swift/AST/ParameterList.h"
 #include "swift/AST/TypeCheckRequests.h"
+#include "swift/Basic/Assertions.h"
 #include "clang/AST/DeclObjC.h"
 
 using namespace swift;
@@ -206,29 +207,21 @@ void AccessControlCheckerBase::checkTypeAccessImpl(
     return;
 
   // Report where it was imported from.
-  if (contextAccessScope.isPublic() ||
-      contextAccessScope.isPackage()) {
-    auto SF = useDC->getParentSourceFile();
+  if (contextAccessScope.isPublicOrPackage()) {
     auto report = [&](const DeclRefTypeRepr *typeRepr, const ValueDecl *VD) {
-      ImportAccessLevel import = VD->getImportAccessFrom(useDC);
-      if (import.has_value()) {
-        if (SF) {
-          auto useLevel = contextAccessScope.isPublic() ? AccessLevel::Public
-                                                        : AccessLevel::Package;
-          SF->registerAccessLevelUsingImport(import.value(), useLevel);
-        }
-
-        if (Context.LangOpts.EnableModuleApiImportRemarks) {
-          SourceLoc diagLoc = typeRepr? typeRepr->getLoc()
-                                      : extractNearestSourceLoc(useDC);
-          ModuleDecl *importedVia = import->module.importedModule,
-                     *sourceModule = VD->getModuleContext();
-          Context.Diags.diagnose(diagLoc, diag::module_api_import,
-                                 VD, importedVia, sourceModule,
-                                 importedVia == sourceModule,
-                                 /*isImplicit*/!typeRepr);
-        }
-      }
+      // Remember that the module defining the decl must be imported publicly.
+      recordRequiredImportAccessLevelForDecl(
+          VD, useDC, contextAccessScope.accessLevelForDiagnostics(),
+          [&](AttributedImport<ImportedModule> attributedImport) {
+            SourceLoc diagLoc =
+                typeRepr ? typeRepr->getLoc() : extractNearestSourceLoc(useDC);
+            ModuleDecl *importedVia = attributedImport.module.importedModule,
+                       *sourceModule = VD->getModuleContext();
+            Context.Diags.diagnose(diagLoc, diag::module_api_import, VD,
+                                   importedVia, sourceModule,
+                                   importedVia == sourceModule,
+                                   /*isImplicit*/ !typeRepr);
+          });
     };
 
     if (typeRepr) {
@@ -404,12 +397,13 @@ static void noteLimitingImport(const Decl *userDecl,
                      limitImport->accessLevel,
                      limitImport->module.importedModule);
 
-    ctx.Diags.diagnose(limitImport->importLoc,
-                       diag::decl_import_via_here,
-                       VD,
-                       limitImport->accessLevel,
-                       limitImport->module.importedModule);
-  } else {
+    if (limitImport->importLoc.isValid())
+      ctx.Diags.diagnose(limitImport->importLoc,
+                         diag::decl_import_via_here,
+                         VD,
+                         limitImport->accessLevel,
+                         limitImport->module.importedModule);
+  } else if (limitImport->importLoc.isValid()) {
     ctx.Diags.diagnose(limitImport->importLoc, diag::module_imported_here,
                        limitImport->module.importedModule,
                        limitImport->accessLevel);
@@ -1424,16 +1418,13 @@ public:
             ImportAccessLevel importLimit) {
           auto &Ctx = theVar->getASTContext();
           auto diagID = diag::pattern_type_not_usable_from_inline_inferred;
-          auto hasPackageScope = false;
           if (fixedLayoutStructContext) {
             diagID = diag::pattern_type_not_usable_from_inline_inferred_frozen;
-            hasPackageScope = fixedLayoutStructContext->getFormalAccessScope(nullptr, true).isPackage();
           } else if (!Ctx.isSwiftVersionAtLeast(5)) {
             diagID = diag::pattern_type_not_usable_from_inline_inferred_warn;
           }
           Ctx.Diags.diagnose(NP->getLoc(), diagID, theVar->isLet(),
-                             isTypeContext, theVar->getInterfaceType(),
-                             hasPackageScope);
+                             isTypeContext, theVar->getInterfaceType());
           noteLimitingImport(theVar, importLimit, complainRepr);
         });
   }
@@ -1466,14 +1457,12 @@ public:
             ImportAccessLevel importLimit) {
           auto &Ctx = anyVar->getASTContext();
           auto diagID = diag::pattern_type_not_usable_from_inline;
-          auto hasPackageScope = false;
-          if (fixedLayoutStructContext) {
+          if (fixedLayoutStructContext)
             diagID = diag::pattern_type_not_usable_from_inline_frozen;
-            hasPackageScope = fixedLayoutStructContext->getFormalAccessScope(nullptr, true).isPackage();
-          } else if (!Ctx.isSwiftVersionAtLeast(5))
+          else if (!Ctx.isSwiftVersionAtLeast(5))
             diagID = diag::pattern_type_not_usable_from_inline_warn;
           auto diag = Ctx.Diags.diagnose(TP->getLoc(), diagID, anyVar->isLet(),
-                                         isTypeContext, hasPackageScope);
+                                         isTypeContext);
           highlightOffendingType(diag, complainRepr);
           noteLimitingImport(anyVar, importLimit, complainRepr);
         });
@@ -2016,20 +2005,9 @@ swift::getDisallowedOriginKind(const Decl *decl,
   // Report non-public import last as it can be ignored by the caller.
   // See \c diagnoseValueDeclRefExportability.
   auto importSource = decl->getImportAccessFrom(where.getDeclContext());
-  if (importSource.has_value()) {
-    if (importSource->accessLevel == AccessLevel::Package) {
-      auto kind = where.getFragileFunctionKind().kind;
-      if (where.isPackage() &&
-          (kind == FragileFunctionKind::None ||
-           kind == FragileFunctionKind::DefaultArgument ||
-           kind == FragileFunctionKind::PropertyInitializer))
-        return DisallowedOriginKind::None;
-      return DisallowedOriginKind::PackageImport;
-    }
-
-    if (importSource->accessLevel < AccessLevel::Package)
-      return DisallowedOriginKind::InternalOrLessImport;
-  }
+  if (importSource.has_value() &&
+      importSource->accessLevel < AccessLevel::Public)
+    return DisallowedOriginKind::NonPublicImport;
 
   return DisallowedOriginKind::None;
 }
@@ -2269,13 +2247,14 @@ public:
     // declaration slipped in when the compiler wasn't able to diagnose it and
     // can't be changed.
     if (nominal->getName().is("AnyColorBox") &&
-        nominal->getModuleContext()->getName().is("SwiftUI"))
+        (nominal->getModuleContext()->getName().is("SwiftUI") ||
+         nominal->getModuleContext()->getName().is("SwiftUICore")))
       flags |= DeclAvailabilityFlag::
           AllowPotentiallyUnavailableAtOrBelowDeploymentTarget;
 
     for (TypeLoc inherited : nominal->getInherited().getEntries()) {
       checkType(inherited.getType(), inherited.getTypeRepr(), nominal,
-                ExportabilityReason::General, flags);
+                ExportabilityReason::Inheritance, flags);
     }
   }
 
@@ -2352,19 +2331,13 @@ public:
   }
 
   void checkConstrainedExtensionRequirements(ExtensionDecl *ED,
-                                             bool hasExportedPublicMembers,
-                                             bool hasExportedPackageMembers,
-                                             bool hasPackageInheritance) {
+                                             bool hasExportedMembers) {
     if (!ED->getTrailingWhereClause())
       return;
 
-    ExportabilityReason reason = ExportabilityReason::ExtensionWithConditionalConformances;
-    if (hasExportedPublicMembers)
-      reason = ExportabilityReason::ExtensionWithPublicMembers;
-    else if (hasExportedPackageMembers)
-      reason = ExportabilityReason::ExtensionWithPackageMembers;
-    else if (hasPackageInheritance)
-      reason = ExportabilityReason::ExtensionWithPackageConditionalConformances;
+    ExportabilityReason reason =
+        hasExportedMembers ? ExportabilityReason::ExtensionWithPublicMembers
+                           : ExportabilityReason::ExtensionWithConditionalConformances;
 
     forAllRequirementTypes(ED, [&](Type type, TypeRepr *typeRepr) {
       checkType(type, typeRepr, ED, reason);
@@ -2383,7 +2356,7 @@ public:
     // must be exported.
     for (TypeLoc inherited : ED->getInherited().getEntries()) {
       checkType(inherited.getType(), inherited.getTypeRepr(), ED,
-                ExportabilityReason::General,
+                ExportabilityReason::Inheritance,
                 DeclAvailabilityFlag::AllowPotentiallyUnavailableProtocol);
     }
 
@@ -2391,87 +2364,42 @@ public:
 
     // 2) If the extension contains exported members, the as-written
     // extended type should be exportable.
-    bool hasExportedPublicMembers = llvm::any_of(ED->getMembers(),
+    bool hasExportedMembers = llvm::any_of(ED->getMembers(),
                                            [](const Decl *member) -> bool {
       auto *valueMember = dyn_cast<ValueDecl>(member);
       if (!valueMember)
         return false;
-      return isExported(valueMember) &&
-             !valueMember->getFormalAccessScope(nullptr, true).isPackage();
-
-    });
-
-    // Keep track of package (exported) members separately from public
-    // members for diags purposes.
-    bool hasExportedPackageMembers = llvm::any_of(ED->getMembers(),
-                                           [](const Decl *member) -> bool {
-      auto *valueMember = dyn_cast<ValueDecl>(member);
-      if (!valueMember)
-        return false;
-      return isExported(valueMember) &&
-             valueMember->getFormalAccessScope(nullptr, true).isPackage();
-    });
-
-    bool hasExportedMembers = hasExportedPublicMembers || hasExportedPackageMembers;
-    
-    // Keep track of inheritance with package access level for diags purposes.
-    bool hasPackageInheritance = llvm::any_of(ED->getInherited().getEntries(),
-                                           [](const InheritedEntry entry) -> bool {
-      if (!entry.wasValidated())
-        return false;
-      auto enType = entry.getType();
-      if (enType) {
-        if (const auto *ProtoD = dyn_cast_or_null<ProtocolDecl>(enType->getAnyNominal())) {
-          if (ProtoD && isExported(ProtoD) &&
-              ProtoD->getFormalAccessScope(nullptr, true).isPackage())
-            return true;
-        }
-      }
-      return false;
+      return isExported(valueMember);
     });
 
     Where = wasWhere.withExported(hasExportedMembers);
-
-    ExportabilityReason reason = ExportabilityReason::ExtensionWithPublicMembers;
-    if (!hasExportedPublicMembers && hasExportedPackageMembers)
-      reason = ExportabilityReason::ExtensionWithPackageMembers;
-
-    checkType(ED->getExtendedType(), ED->getExtendedTypeRepr(), 
-              ED, reason);
+    checkType(ED->getExtendedType(), ED->getExtendedTypeRepr(), ED,
+              ExportabilityReason::ExtensionWithPublicMembers);
 
     // 3) If the extension contains exported members or defines conformances,
     // the 'where' clause must only name exported types.
     Where = wasWhere.withExported(hasExportedMembers ||
                                   !ED->getInherited().empty());
-    checkConstrainedExtensionRequirements(ED, hasExportedPublicMembers,
-                                          hasExportedPackageMembers,
-                                          hasPackageInheritance);
+    checkConstrainedExtensionRequirements(ED, hasExportedMembers);
 
-    if (!hasExportedMembers &&
-        !ED->getInherited().empty()) {
-      // If we haven't already visited the extended nominal visit it here.
-      // This logic is too wide but prevents false reports of an unused public
-      // import. We should instead check for public generic requirements
-      // similarly to ShouldPrintForModuleInterface::shouldPrint.
+    // If we haven't already visited the extended nominal visit it here.
+    // This logic is too wide but prevents false reports of an unused public
+    // import. We should instead check for public generic requirements
+    // similarly to ShouldPrintForModuleInterface::shouldPrint.
+    if (!hasExportedMembers && !ED->getInherited().empty()) {
       auto DC = Where.getDeclContext();
-      ImportAccessLevel import = extendedType->getImportAccessFrom(DC);
-      if (import.has_value()) {
-        auto SF = DC->getParentSourceFile();
-        if (SF) {
-          if (SF->isMaxAccessLevelUsingImportInternal(import.value()))
-            SF->registerAccessLevelUsingImport(import.value(),
-                                               AccessLevel::Public);
-        }
-        auto &ctx = DC->getASTContext();
-        if (ctx.LangOpts.EnableModuleApiImportRemarks) {
-          ModuleDecl *importedVia = import->module.importedModule,
-                     *sourceModule = ED->getModuleContext();
-          ED->diagnose(diag::module_api_import,
-                       ED, importedVia, sourceModule,
-                       importedVia == sourceModule,
-                       /*isImplicit*/false);
-        }
-      }
+
+      // Remember that the module defining the extended type must be imported
+      // publicly.
+      recordRequiredImportAccessLevelForDecl(
+          extendedType, DC, AccessLevel::Public,
+          [&](AttributedImport<ImportedModule> attributedImport) {
+            ModuleDecl *importedVia = attributedImport.module.importedModule,
+                       *sourceModule = ED->getModuleContext();
+            ED->diagnose(diag::module_api_import, ED, importedVia, sourceModule,
+                         importedVia == sourceModule,
+                         /*isImplicit*/ false);
+          });
     }
   }
 
@@ -2568,6 +2496,32 @@ DisallowedOriginKind swift::getDisallowedOriginKind(const Decl *decl,
   return getDisallowedOriginKind(decl, where, downgradeToWarning);
 }
 
+void swift::recordRequiredImportAccessLevelForDecl(
+    const Decl *decl, const DeclContext *dc, AccessLevel accessLevel,
+    RequiredImportAccessLevelCallback remark) {
+  auto sf = dc->getParentSourceFile();
+  if (!sf)
+    return;
+
+  auto definingModule = decl->getModuleContext();
+  if (definingModule == dc->getParentModule())
+    return;
+
+  sf->registerRequiredAccessLevelForModule(definingModule, accessLevel);
+
+  if (auto attributedImport = sf->getImportAccessLevel(definingModule)) {
+    auto importedModule = attributedImport->module.importedModule;
+
+    // If the defining module is transitively imported, mark the responsible
+    // module as requiring the minimum access level too.
+    if (importedModule != definingModule)
+      sf->registerRequiredAccessLevelForModule(importedModule, accessLevel);
+
+    if (dc->getASTContext().LangOpts.EnableModuleApiImportRemarks)
+      remark(*attributedImport);
+  }
+}
+
 void swift::diagnoseUnnecessaryPublicImports(SourceFile &SF) {
   ASTContext &ctx = SF.getASTContext();
   if (ctx.TypeCheckerOpts.SkipFunctionBodies != FunctionBodySkipping::None)
@@ -2611,6 +2565,44 @@ void swift::diagnoseUnnecessaryPublicImports(SourceFile &SF) {
   }
 }
 
+/// Register the type extended by \p ED as being used in a package decl if
+/// any member is a package decl. This patches a hole in the warnings on
+/// superfluously public imports which usually relies on exportability checking
+/// that is not currently executed for package decls.
+void registerPackageAccessForPackageExtendedType(ExtensionDecl *ED) {
+  auto extendedType = ED->getExtendedNominal();
+  if (!extendedType)
+    return;
+
+  bool hasPackageMembers = llvm::any_of(ED->getMembers(),
+                                        [](const Decl *member) -> bool {
+    auto *VD = dyn_cast<ValueDecl>(member);
+    if (!VD)
+      return false;
+
+    AccessScope accessScope =
+        VD->getFormalAccessScope(nullptr,
+                                 /*treatUsableFromInlineAsPublic*/true);
+    return accessScope.isPackage();
+  });
+  if (!hasPackageMembers)
+    return;
+
+  DeclContext *DC = ED->getDeclContext();
+
+  // Remember that the module defining the decl must be imported with at least
+  // package visibility.
+  recordRequiredImportAccessLevelForDecl(
+      extendedType, DC, AccessLevel::Package,
+      [&](AttributedImport<ImportedModule> attributedImport) {
+        ModuleDecl *importedVia = attributedImport.module.importedModule,
+                   *sourceModule = ED->getModuleContext();
+        ED->diagnose(diag::module_api_import, ED, importedVia, sourceModule,
+                     importedVia == sourceModule,
+                     /*isImplicit*/ false);
+      });
+}
+
 void swift::checkAccessControl(Decl *D) {
   if (isa<ValueDecl>(D) || isa<PatternBindingDecl>(D)) {
     bool allowInlineable =
@@ -2619,6 +2611,7 @@ void swift::checkAccessControl(Decl *D) {
     UsableFromInlineChecker().visit(D);
   } else if (auto *ED = dyn_cast<ExtensionDecl>(D)) {
     checkExtensionGenericParamAccess(ED);
+    registerPackageAccessForPackageExtendedType(ED);
   }
 
   if (isa<AccessorDecl>(D))

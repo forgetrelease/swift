@@ -18,6 +18,7 @@
 #include "swift/AST/ASTContext.h"
 #include "swift/AST/ASTSynthesis.h"
 #include "swift/AST/AnyFunctionRef.h"
+#include "swift/AST/ConformanceLookup.h"
 #include "swift/AST/Decl.h"
 #include "swift/AST/ExistentialLayout.h"
 #include "swift/AST/GenericEnvironment.h"
@@ -26,6 +27,7 @@
 #include "swift/AST/ProtocolConformance.h"
 #include "swift/AST/SemanticAttrs.h"
 #include "swift/AST/Types.h"
+#include "swift/Basic/Assertions.h"
 #include "swift/Basic/Range.h"
 #include "swift/ClangImporter/ClangModule.h"
 #include "swift/SIL/AddressWalker.h"
@@ -92,6 +94,58 @@ static llvm::cl::opt<bool> SkipConvertEscapeToNoescapeAttributes(
 static llvm::cl::opt<bool> AllowCriticalEdges("allow-critical-edges",
                                               llvm::cl::init(true));
 extern llvm::cl::opt<bool> SILPrintDebugInfo;
+
+void swift::verificationFailure(const Twine &complaint,
+              const SILInstruction *atInstruction,
+              const SILArgument *atArgument,
+              const std::function<void()> &extraContext) {
+  const SILFunction *f = nullptr;
+  StringRef funcName = "?";
+  if (atInstruction) {
+    f = atInstruction->getFunction();
+    funcName = f->getName();
+  } else if (atArgument) {
+    f = atArgument->getFunction();
+    funcName = f->getName();
+  }
+  if (ContinueOnFailure) {
+    llvm::dbgs() << "Begin Error in function " << funcName << "\n";
+  }
+
+  llvm::dbgs() << "SIL verification failed: " << complaint << "\n";
+  if (extraContext)
+    extraContext();
+
+  if (atInstruction) {
+    llvm::dbgs() << "Verifying instruction:\n";
+    atInstruction->printInContext(llvm::dbgs());
+  } else if (atArgument) {
+    llvm::dbgs() << "Verifying argument:\n";
+    atArgument->printInContext(llvm::dbgs());
+  }
+  if (ContinueOnFailure) {
+    llvm::dbgs() << "End Error in function " << funcName << "\n";
+    return;
+  }
+
+  if (f) {
+    llvm::dbgs() << "In function:\n";
+    f->print(llvm::dbgs());
+    if (DumpModuleOnFailure) {
+      // Don't do this by default because modules can be _very_ large.
+      llvm::dbgs() << "In module:\n";
+      f->getModule().print(llvm::dbgs());
+    }
+  }
+
+  // We abort by default because we want to always crash in
+  // the debugger.
+  if (AbortOnFailure)
+    abort();
+  else
+    exit(1);
+}
+
 
 // The verifier is basically all assertions, so don't compile it with NDEBUG to
 // prevent release builds from triggering spurious unused variable warnings.
@@ -321,7 +375,7 @@ void verifyKeyPathComponent(SILModule &M,
               "property");
     }
 
-    auto fieldTy = baseTy->getTypeOfMember(M.getSwiftModule(), property)
+    auto fieldTy = baseTy->getTypeOfMember(property)
                          ->getReferenceStorageReferent()
                          ->getCanonicalType();
     require(getTypeInExpansionContext(fieldTy) ==
@@ -543,6 +597,7 @@ struct ImmutableAddressUseVerifier {
     case SILArgumentConvention::Indirect_Out:
     case SILArgumentConvention::Indirect_In:
     case SILArgumentConvention::Indirect_Inout:
+    case SILArgumentConvention::Indirect_In_CXX:
       return true;
 
     case SILArgumentConvention::Direct_Unowned:
@@ -920,45 +975,7 @@ public:
                 const std::function<void()> &extraContext = nullptr) {
     if (condition) return;
 
-    StringRef funcName;
-    if (CurInstruction)
-      funcName = CurInstruction->getFunction()->getName();
-    else if (CurArgument)
-      funcName = CurArgument->getFunction()->getName();
-    if (ContinueOnFailure) {
-      llvm::dbgs() << "Begin Error in function " << funcName << "\n";
-    }
-
-    llvm::dbgs() << "SIL verification failed: " << complaint << "\n";
-    if (extraContext)
-      extraContext();
-
-    if (CurInstruction) {
-      llvm::dbgs() << "Verifying instruction:\n";
-      CurInstruction->printInContext(llvm::dbgs());
-    } else if (CurArgument) {
-      llvm::dbgs() << "Verifying argument:\n";
-      CurArgument->printInContext(llvm::dbgs());
-    }
-    if (ContinueOnFailure) {
-      llvm::dbgs() << "End Error in function " << funcName << "\n";
-      return;
-    }
-
-    llvm::dbgs() << "In function:\n";
-    F.print(llvm::dbgs());
-    if (DumpModuleOnFailure) {
-      // Don't do this by default because modules can be _very_ large.
-      llvm::dbgs() << "In module:\n";
-      F.getModule().print(llvm::dbgs());
-    }
-
-    // We abort by default because we want to always crash in
-    // the debugger.
-    if (AbortOnFailure)
-      abort();
-    else
-      exit(1);
+    verificationFailure(complaint, CurInstruction, CurArgument, extraContext);
   }
 #define require(condition, complaint) \
   _require(bool(condition), complaint ": " #condition)
@@ -2145,6 +2162,8 @@ public:
   }
 
   void checkMarkDependencInst(MarkDependenceInst *MDI) {
+    require(isa<SILUndef>(MDI->getValue()) || MDI->getValue() != MDI->getBase(),
+            "mark_dependence operands must be distinct");
     if (MDI->isNonEscaping()) {
       require(F.hasOwnership(), "mark_dependence [nonescaping] requires OSSA");
       require(MDI->getOwnershipKind() == OwnershipKind::Owned,
@@ -2194,8 +2213,9 @@ public:
           "applied argument types do not match suffix of function type's "
           "inputs");
       if (PAI->isOnStack()) {
-        require(!substConv.getSILArgumentConvention(argIdx).isOwnedConvention(),
-          "on-stack closures do not support owned arguments");
+        require(!substConv.getSILArgumentConvention(argIdx)
+                     .isOwnedConventionInCaller(),
+                "on-stack closures do not support owned arguments");
       }
     }
 
@@ -2383,8 +2403,8 @@ public:
     if (builtinKind == BuiltinValueKind::CreateAsyncTask) {
       requireType(BI->getType(), _object(_tuple(_nativeObject, _rawPointer)),
                   "result of createAsyncTask");
-      require(arguments.size() == 5,
-              "createAsyncTask expects five arguments");
+      require(arguments.size() == 6,
+              "createAsyncTask expects six arguments");
       requireType(arguments[0]->getType(), _object(_swiftInt),
                   "first argument of createAsyncTask");
       requireType(arguments[1]->getType(), _object(_optional(_executor)),
@@ -2393,10 +2413,25 @@ public:
                   "third argument of createAsyncTask");
       requireType(arguments[3]->getType(), _object(_optional(_executor)),
                   "fourth argument of createAsyncTask");
-      auto fnType = requireObjectType(SILFunctionType, arguments[4],
+      if (F.getASTContext().getProtocol(swift::KnownProtocolKind::TaskExecutor)) {
+        requireType(arguments[4]->getType(),
+                    _object(_optional(_existential(_taskExecutor))),
+                    "fifth argument of createAsyncTask");
+      } else {
+        // This is just a placeholder type for being able to pass 'nil' for it
+        // with SDKs which do not have the TaskExecutor type.
+        requireType(arguments[4]->getType(),
+                    _object(_optional(_executor)),
+                    "fifth argument of createAsyncTask");
+      }
+      auto fnType = requireObjectType(SILFunctionType, arguments[5],
                                       "result of createAsyncTask");
-      auto expectedExtInfo =
-        SILExtInfoBuilder().withAsync(true).withSendable(true).build();
+      bool haveSending =
+          F.getASTContext().LangOpts.hasFeature(Feature::SendingArgsAndResults);
+      auto expectedExtInfo = SILExtInfoBuilder()
+                                 .withAsync(true)
+                                 .withSendable(!haveSending)
+                                 .build();
       require(fnType->getExtInfo().isEqualTo(expectedExtInfo, /*clang types*/true),
               "function argument to createAsyncTask has incorrect ext info");
       // FIXME: it'd be better if we took a consuming closure here
@@ -2623,8 +2658,13 @@ public:
     requireSameType(LBI->getOperand()->getType().getObjectType(),
                     LBI->getType(),
                     "Load operand type and result type mismatch");
-    require(loadBorrowImmutabilityAnalysis.isImmutable(LBI),
-            "Found load borrow that is invalidated by a local write?!");
+    if (LBI->isUnchecked()) {
+      require(LBI->getModule().getStage() == SILStage::Raw,
+              "load_borrow can only be [unchecked] in raw SIL");
+    } else {
+      require(loadBorrowImmutabilityAnalysis.isImmutable(LBI),
+              "Found load borrow that is invalidated by a local write?!");
+    }
   }
 
   void checkBeginBorrowInst(BeginBorrowInst *bbi) {
@@ -2677,19 +2717,24 @@ public:
   }
 
   void checkExtendLifetimeInst(ExtendLifetimeInst *I) {
-    require(!I->getOperand()->getType().isTrivial(*I->getFunction()),
-            "Source value should be non-trivial");
     require(F.hasOwnership(),
             "extend_lifetime is only valid in functions with qualified "
             "ownership");
+    // In Raw SIL, extend_lifetime marks the end of variable scopes.
+    if (F.getModule().getStage() == SILStage::Raw)
+      return;
+
+    require(!I->getOperand()->getType().isTrivial(*I->getFunction()),
+            "Source value should be non-trivial after diagnostics");
     require(getDeadEndBlocks().isDeadEnd(I->getParent()),
-            "extend_lifetime in non-dead-end!?");
+            "extend_lifetime in non-dead-end after diagnostics");
+
     auto value = I->getOperand();
     LinearLiveness linearLiveness(value,
                                   LinearLiveness::DoNotIncludeExtensions);
     linearLiveness.compute();
     auto &liveness = linearLiveness.getLiveness();
-    require(!liveness.isWithinBoundary(I),
+    require(!liveness.isWithinBoundary(I, /*deadEndBlocks=*/nullptr),
             "extend_lifetime use within unextended linear liveness boundary!?");
     PrunedLivenessBoundary boundary;
     liveness.computeBoundary(boundary);
@@ -2764,7 +2809,8 @@ public:
       if (scopedAddress.isScopeEndingUse(use)) {
         continue;
       }
-      if (!scopedAddressLiveness->isWithinBoundary(user)) {
+      if (!scopedAddressLiveness->isWithinBoundary(user,
+                                                   /*deadEndBlocks=*/nullptr)) {
         llvm::errs() << "User found outside scope: " << *user;
         return false;
       }
@@ -3377,11 +3423,16 @@ public:
   void checkDestroyValueInst(DestroyValueInst *I) {
     require(I->getOperand()->getType().isObject(),
             "Source value should be an object value");
-    require(!I->getOperand()->getType().isTrivial(*I->getFunction()),
+    require(!I->getOperand()->getType().isTrivial(*I->getFunction())
+            || I->getOperand()->isFromVarDecl(),
             "Source value should be non-trivial");
     require(!fnConv.useLoweredAddresses() || F.hasOwnership(),
             "destroy_value is only valid in functions with qualified "
             "ownership");
+    if (I->isDeadEnd()) {
+      require(getDeadEndBlocks().isDeadEnd(I->getParentBlock()),
+              "a dead_end destroy_value must be in a dead-end block");
+    }
   }
 
   void checkReleaseValueInst(ReleaseValueInst *I) {
@@ -3782,6 +3833,10 @@ public:
     require(boxTy, "operand must be a @box type");
     require(DI->getOperand()->getType().isObject(),
             "operand must be an object");
+    if (DI->isDeadEnd()) {
+      require(getDeadEndBlocks().isDeadEnd(DI->getParentBlock()),
+              "a dead_end dealloc_box must be in a dead-end block");
+    }
   }
 
   void checkDestroyAddrInst(DestroyAddrInst *DI) {
@@ -5874,7 +5929,7 @@ public:
       auto expectedJVPType = origTy->getAutoDiffDerivativeFunctionType(
           dfi->getParameterIndices(), dfi->getResultIndices(),
           AutoDiffDerivativeFunctionKind::JVP, TC,
-          LookUpConformanceInModule(M));
+          LookUpConformanceInModule());
       requireSameType(SILType::getPrimitiveObjectType(jvpType),
                       SILType::getPrimitiveObjectType(expectedJVPType),
                       "JVP type does not match expected JVP type");
@@ -5886,7 +5941,7 @@ public:
       auto expectedVJPType = origTy->getAutoDiffDerivativeFunctionType(
           dfi->getParameterIndices(), dfi->getResultIndices(),
           AutoDiffDerivativeFunctionKind::VJP, TC,
-          LookUpConformanceInModule(M));
+          LookUpConformanceInModule());
       requireSameType(SILType::getPrimitiveObjectType(vjpType),
                       SILType::getPrimitiveObjectType(expectedVJPType),
                       "VJP type does not match expected VJP type");
@@ -5913,7 +5968,7 @@ public:
       require(!transposeType->isDifferentiable(),
               "The transpose function must not be differentiable");
       auto expectedTransposeType = origTy->getAutoDiffTransposeFunctionType(
-          lfi->getParameterIndices(), TC, LookUpConformanceInModule(M));
+          lfi->getParameterIndices(), TC, LookUpConformanceInModule());
       // TODO: Consider tightening verification. This requires changes to
       // `SILFunctionType::getAutoDiffTransposeFunctionType`.
       requireSameType(
@@ -6246,13 +6301,6 @@ public:
         }
         return packElementType;
       };
-      auto substConformances = [&](CanType dependentType,
-                                   Type conformingType,
-                                   ProtocolDecl *protocol) -> ProtocolConformanceRef {
-        // FIXME: This violates the spirit of this verifier check.
-        return protocol->getParentModule()
-            ->lookupConformance(conformingType, protocol);
-      };
 
       // If the pack components and expected element types are SIL types,
       // we need to perform SIL substitution.
@@ -6263,13 +6311,16 @@ public:
           SILType::getPrimitiveObjectType(indexedElementType);
         auto substTargetElementSILType =
           targetElementSILType.subst(F.getModule(),
-                                     substTypes, substConformances);
+                                     substTypes,
+                                     LookUpConformanceInModule(),
+                                     CanGenericSignature(),
+                                     SubstFlags::PreservePackExpansionLevel);
         requireSameType(indexedElementSILType, substTargetElementSILType,
                         "lanewise-substituted pack element type didn't "
                         "match expected element type");
       } else {
         auto substTargetElementType =
-          targetElementType.subst(substTypes, substConformances)
+          targetElementType.subst(substTypes, LookUpConformanceInModule())
                            ->getCanonicalType();
         requireSameType(indexedElementType, substTargetElementType,
                         "lanewise-substituted pack element type didn't "
@@ -6462,6 +6513,7 @@ public:
                          case ParameterConvention::Indirect_Inout:
                          case ParameterConvention::Indirect_InoutAliasable:
                          case ParameterConvention::Indirect_In_Guaranteed:
+                         case ParameterConvention::Indirect_In_CXX:
                          case ParameterConvention::Pack_Owned:
                          case ParameterConvention::Pack_Guaranteed:
                          case ParameterConvention::Pack_Inout:
@@ -6548,9 +6600,11 @@ public:
             "Operand value should be an object");
     require(cvt->getOperand()->getType().isBoxedMoveOnlyWrappedType(cvt->getFunction()),
             "Operand should be move only wrapped");
-    require(cvt->getType() ==
-            cvt->getOperand()->getType().removingMoveOnlyWrapperToBoxedType(cvt->getFunction()),
-            "Result and operand must have the same type, today.");
+    require(
+        cvt->getType() ==
+            cvt->getOperand()->getType().removingMoveOnlyWrapperFromBoxedType(
+                cvt->getFunction()),
+        "Result and operand must have the same type, today.");
   }
 
   void checkCopyableToMoveOnlyWrapperValueInst(
@@ -6660,8 +6714,8 @@ public:
              FTy->getRepresentation() == SILFunctionType::Representation::Thick,
             "only thick function types can have erased isolation");
 
-    // If our function hasTransferringResult, then /all/ results must be
-    // transferring.
+    // If our function hasSendingResult, then /all/ results must be
+    // sending.
     require(FTy->hasSendingResult() ==
                 (FTy->getResults().size() &&
                  llvm::all_of(FTy->getResults(),
@@ -6669,7 +6723,7 @@ public:
                                 return result.hasOption(
                                     SILResultInfo::IsSending);
                               })),
-            "transferring result means all results are transferring");
+            "sending result means all results are sending");
 
     require(1 >= std::count_if(FTy->getParameters().begin(), FTy->getParameters().end(),
                                [](const SILParameterInfo &parameterInfo) {
@@ -6743,6 +6797,9 @@ public:
 
         } else if (i.isDeallocatingStack()) {
           SILValue op = i.getOperand(0);
+          while (auto *mvi = dyn_cast<MoveValueInst>(op)) {
+            op = mvi->getOperand();
+          }
           require(!state.Stack.empty(),
                   "stack dealloc with empty stack");
           if (op != state.Stack.back()) {

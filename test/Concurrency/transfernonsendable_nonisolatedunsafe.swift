@@ -1,4 +1,3 @@
-// RUN: %target-swift-frontend -emit-sil -strict-concurrency=complete -disable-availability-checking -verify -verify-additional-prefix complete- %s -o /dev/null -disable-region-based-isolation-with-strict-concurrency -enable-upcoming-feature GlobalActorIsolatedTypesUsability
 // RUN: %target-swift-frontend -emit-sil -strict-concurrency=complete -disable-availability-checking -verify -verify-additional-prefix tns-  %s -o /dev/null -enable-upcoming-feature GlobalActorIsolatedTypesUsability
 
 // READ THIS: This test is intended to centralize all tests that use
@@ -29,6 +28,8 @@ protocol ProvidesStaticValue {
 
 @MainActor func transferToMainIndirectConsuming<T>(_ t: consuming T) async {}
 @MainActor func transferToMainDirectConsuming(_ t: consuming NonSendableKlass) async {}
+
+func useInOut<T>(_ t: inout T) {}
 
 actor CustomActorInstance {}
 
@@ -349,11 +350,26 @@ func testAccessStaticGlobals() async {
 nonisolated(unsafe) let globalNonIsolatedUnsafeLetObject = NonSendableKlass()
 nonisolated(unsafe) var globalNonIsolatedUnsafeVarObject = NonSendableKlass()
 
-func testAccessGlobals() async {
+func testPassGlobalToMainActorIsolatedFunction() async {
   await transferToMainDirect(globalNonIsolatedUnsafeLetObject)
   await transferToMainIndirect(globalNonIsolatedUnsafeLetObject)
   await transferToMainDirect(globalNonIsolatedUnsafeVarObject)
   await transferToMainIndirect(globalNonIsolatedUnsafeVarObject)
+}
+
+// We use this to force the modify in testPassGlobalToModify
+nonisolated(unsafe)
+var computedGlobalNonIsolatedUnsafeVarObject : NonSendableKlass {
+  _read {
+    yield globalNonIsolatedUnsafeVarObject
+  }
+  _modify {
+    yield &globalNonIsolatedUnsafeVarObject
+  }
+}
+
+func testPassGlobalToModify() async {
+  useInOut(&computedGlobalNonIsolatedUnsafeVarObject)
 }
 
 ///////////////////////
@@ -491,6 +507,7 @@ enum NonIsolatedUnsafeComputedEnum: Sendable {
   case second
 
   nonisolated(unsafe) var nonIsolatedUnsafeVarObject: NonSendableKlass { NonSendableKlass() }
+  // expected-warning@-1{{'nonisolated(unsafe)' has no effect on property 'nonIsolatedUnsafeVarObject', consider using 'nonisolated'}}
 
   func test() async {
     await transferToMainDirect(nonIsolatedUnsafeVarObject)
@@ -589,6 +606,7 @@ enum NonIsolatedUnsafeComputedEnum: Sendable {
   nonisolated(unsafe) let nonIsolatedUnsafeLetObject = NonSendableKlass()
   nonisolated(unsafe) var nonIsolatedUnsafeVarObject = NonSendableKlass()
   nonisolated(unsafe) var nonIsolatedUnsafeVarComputedObject: NonSendableKlass { NonSendableKlass() }
+  // expected-warning@-1{{'nonisolated(unsafe)' has no effect on property 'nonIsolatedUnsafeVarComputedObject', consider using 'nonisolated'}}
 
   var t: T? = nil
 
@@ -630,6 +648,7 @@ enum NonIsolatedUnsafeComputedEnum: Sendable {
   case second
 
   nonisolated(unsafe) var nonIsolatedUnsafeVarObject: NonSendableKlass { NonSendableKlass() }
+  // expected-warning@-1{{'nonisolated(unsafe)' has no effect on property 'nonIsolatedUnsafeVarObject', consider using 'nonisolated'}}
 
   func test() async {
     await transferToMainDirect(nonIsolatedUnsafeVarObject)
@@ -652,6 +671,7 @@ struct NonIsolatedUnsafeFieldNonSendableStruct {
   nonisolated(unsafe) let nonIsolatedUnsafeLetObject = NonSendableKlass()
   nonisolated(unsafe) var nonIsolatedUnsafeVarObject = NonSendableKlass()
   nonisolated(unsafe) var nonIsolatedUnsafeVarComputedObject: NonSendableKlass { NonSendableKlass() }
+  // expected-warning@-1{{'nonisolated(unsafe)' has no effect on property 'nonIsolatedUnsafeVarComputedObject', consider using 'nonisolated'}}
 
   let letObject = NonSendableKlass()
   var varObject = NonSendableKlass()
@@ -772,8 +792,8 @@ class NonIsolatedUnsafeFieldGenericKlass<T> { // expected-complete-note 4{{}}
     // TODO: This diagnostic is unfortunate since we are erroring on the
     // temporary created by the class_method call.
     await transferToMainIndirect(varAddressOnly)
-    // expected-tns-warning @-1 {{sending task-isolated value of type 'T?' with later accesses to main actor-isolated context risks causing data races}}
-    // expected-complete-warning @-2 {{passing argument of non-sendable type 'T?' into main actor-isolated context may introduce data races}}
+    // expected-tns-warning @-1 {{sending value of non-Sendable type 'T?' risks causing data races}}
+    // expected-tns-note @-2 {{sending task-isolated value of non-Sendable type 'T?' to main actor-isolated global function 'transferToMainIndirect' risks causing races in between task-isolated and main actor-isolated uses}}
   }
 
   // This is safe since self will become main actor isolated as a result of

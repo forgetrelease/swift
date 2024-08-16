@@ -26,6 +26,7 @@
 #include "swift/AST/Module.h"
 #include "swift/AST/SILOptions.h"
 #include "swift/SIL/SILModule.h"
+#include "swift/Basic/Assertions.h"
 #include "swift/SILOptimizer/Analysis/Analysis.h"
 #include "swift/SILOptimizer/PassManager/Passes.h"
 #include "swift/SILOptimizer/PassManager/Transforms.h"
@@ -60,10 +61,6 @@ static llvm::cl::opt<bool> SILPrintFinalOSSAModule(
 static llvm::cl::opt<bool> SILViewSILGenCFG(
     "sil-view-silgen-cfg", llvm::cl::init(false),
     llvm::cl::desc("Enable the sil cfg viewer pass before diagnostics"));
-
-static llvm::cl::opt<bool>
-    EnableDeinitDevirtualizer("enable-deinit-devirtualizer", llvm::cl::init(false),
-                          llvm::cl::desc("Enable the DestroyHoisting pass."));
 
 //===----------------------------------------------------------------------===//
 //                          Diagnostic Pass Pipeline
@@ -189,14 +186,6 @@ static void addMandatoryDiagnosticOptPipeline(SILPassPipelinePlan &P) {
   if (P.getOptions().EnableLifetimeDependenceDiagnostics) {
     P.addLifetimeDependenceDiagnostics();
   }
-
-  // Devirtualize deinits early if requested.
-  //
-  // FIXME: why is DeinitDevirtualizer in the middle of the mandatory pipeline,
-  // and what passes/compilation modes depend on it? This pass is never executed
-  // or tested without '-Xllvm enable-deinit-devirtualizer'.
-  if (EnableDeinitDevirtualizer)
-    P.addDeinitDevirtualizer();
 
   // As a temporary measure, we also eliminate move only for non-trivial types
   // until we can audit the later part of the pipeline. Eventually, this should
@@ -517,6 +506,8 @@ void addFunctionPasses(SILPassPipelinePlan &P,
   }
   P.addARCSequenceOpts();
 
+  P.addDeinitDevirtualizer();
+
   // We earlier eliminated ownership if we are not compiling the stdlib. Now
   // handle the stdlib functions, re-simplifying, eliminating ARC as we do.
   if (P.getOptions().CopyPropagation != CopyPropagationOption::Off) {
@@ -683,7 +674,14 @@ static void addPerfEarlyModulePassPipeline(SILPassPipelinePlan &P) {
 static void addHighLevelFunctionPipeline(SILPassPipelinePlan &P) {
   P.startPipeline("HighLevel,Function+EarlyLoopOpt",
                   true /*isFunctionPassPipeline*/);
-  P.addEagerSpecializer();
+
+  // Skip EagerSpecializer on embedded Swift, which already specializes
+  // everything. Otherwise this would create metatype references for functions
+  // with @_specialize attribute and those are incompatible with Emebdded Swift.
+  if (!P.getOptions().EmbeddedSwift) {
+    P.addEagerSpecializer();
+  }
+
   P.addObjCBridgingOptimization();
 
   addFunctionPasses(P, OptimizationLevelKind::HighLevel);

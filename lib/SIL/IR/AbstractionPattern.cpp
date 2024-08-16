@@ -17,6 +17,7 @@
 
 #define DEBUG_TYPE "libsil"
 #include "swift/AST/ASTContext.h"
+#include "swift/AST/ConformanceLookup.h"
 #include "swift/AST/Decl.h"
 #include "swift/AST/ForeignAsyncConvention.h"
 #include "swift/AST/ForeignErrorConvention.h"
@@ -25,6 +26,7 @@
 #include "swift/AST/ModuleLoader.h"
 #include "swift/AST/TypeCheckRequests.h"
 #include "swift/AST/CanTypeVisitor.h"
+#include "swift/Basic/Assertions.h"
 #include "swift/Basic/Defer.h"
 #include "swift/SIL/TypeLowering.h"
 #include "swift/SIL/AbstractionPatternGenerators.h"
@@ -290,9 +292,9 @@ bool AbstractionPattern::conformsToKnownProtocol(
     = substTy->getASTContext().getProtocol(protocolKind);
     
   auto definitelyConforms = [&](CanType t) -> bool {
-    auto result = suppressible->getParentModule()
-      ->checkConformanceWithoutContext(t, suppressible,
-                                       /*allowMissing=*/false);
+    auto result =
+      checkConformanceWithoutContext(t, suppressible,
+                                     /*allowMissing=*/false);
     return result.has_value() && !result.value().isInvalid();
   };
     
@@ -2065,7 +2067,7 @@ const {
   case Kind::ClangType:
   case Kind::Type:
   case Kind::Discard:
-    auto memberTy = getType()->getTypeOfMember(member->getModuleContext(),
+    auto memberTy = getType()->getTypeOfMember(
                                       member, origMemberInterfaceType)
                              ->getReducedType(getGenericSignature());
       
@@ -2523,9 +2525,8 @@ public:
     
     auto decl = orig->getAnyNominal();
 
-    auto moduleDecl = decl->getParentModule();
-    auto origSubMap = orig->getContextSubstitutionMap(moduleDecl, decl);
-    auto substSubMap = subst->getContextSubstitutionMap(moduleDecl, decl);
+    auto origSubMap = orig->getContextSubstitutionMap(decl);
+    auto substSubMap = subst->getContextSubstitutionMap(decl);
     
     auto nomGenericSig = decl->getGenericSignature();
     
@@ -2542,7 +2543,7 @@ public:
     }
 
     auto newSubMap = SubstitutionMap::get(nomGenericSig, replacementTypes,
-      LookUpConformanceInModule(moduleDecl));
+      LookUpConformanceInModule());
     
     for (auto reqt : nomGenericSig.getRequirements()) {
       // Skip conformance requirements to Copyable and Escapable.
@@ -2840,17 +2841,7 @@ const {
     [&](SubstitutableType *dependentType) -> Type {
       auto index = cast<GenericTypeParamType>(dependentType)->getIndex();
       return visitor.substReplacementTypes[index];
-    }, [&](CanType dependentType,
-           Type conformingReplacementType,
-           ProtocolDecl *conformedProtocol) -> ProtocolConformanceRef {
-      // TODO: Should have collected the conformances used in the original
-      // type.
-      if (conformingReplacementType->isTypeParameter())
-        return ProtocolConformanceRef(conformedProtocol);
-    
-      return TC.M.lookupConformance(conformingReplacementType, conformedProtocol,
-                                    /*allowMissing*/ true);
-    });
+    }, LookUpConformanceInModule());
 
   auto yieldType = visitor.substYieldType;
   if (yieldType)

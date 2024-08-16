@@ -15,6 +15,7 @@
 #include "swift/AST/ASTDemangler.h"
 #include "swift/AST/ASTPrinter.h"
 #include "swift/AST/Attr.h"
+#include "swift/AST/ConformanceLookup.h"
 #include "swift/AST/Decl.h"
 #include "swift/AST/Expr.h"
 #include "swift/AST/GenericEnvironment.h"
@@ -26,6 +27,7 @@
 #include "swift/AST/Requirement.h"
 #include "swift/AST/SourceFile.h"
 #include "swift/AST/Types.h"
+#include "swift/Basic/Assertions.h"
 #include "swift/IDE/IDERequests.h"
 #include "swift/IDE/SourceEntityWalker.h"
 #include "swift/Parse/Lexer.h"
@@ -65,7 +67,7 @@ void swift::getTopLevelDeclsForDisplay(
 
       auto proto = M->getASTContext().getProtocol(KnownProtocolKind::Sendable);
       if (proto)
-        (void)M->lookupConformance(NTD->getDeclaredInterfaceType(), proto);
+        (void) lookupConformance(NTD->getDeclaredInterfaceType(), proto);
     }
   }
 
@@ -357,7 +359,6 @@ struct SynthesizedExtensionAnalyzer::Implementation {
         assert(!Req.getFirstType()->hasArchetype());
         assert(!Req.getSecondType()->hasArchetype());
 
-        auto *M = DC->getParentModule();
         auto SubstReq = Req.subst(
           [&](Type type) -> Type {
             if (type->isTypeParameter())
@@ -365,7 +366,7 @@ struct SynthesizedExtensionAnalyzer::Implementation {
 
             return type;
           },
-          LookUpConformanceInModule(M));
+          LookUpConformanceInModule());
 
         SmallVector<Requirement, 2> subReqs;
         switch (SubstReq.checkRequirement(subReqs)) {
@@ -395,7 +396,6 @@ struct SynthesizedExtensionAnalyzer::Implementation {
       return false;
     };
 
-    auto *M = DC->getParentModule();
     if (Ext->isConstrainedExtension()) {
       // Get the substitutions from the generic signature of
       // the extension to the interface types of the base type's
@@ -403,7 +403,7 @@ struct SynthesizedExtensionAnalyzer::Implementation {
       SubstitutionMap subMap;
       if (!BaseType->isExistentialType()) {
         if (auto *NTD = Ext->getExtendedNominal())
-          subMap = BaseType->getContextSubstitutionMap(M, NTD);
+          subMap = BaseType->getContextSubstitutionMap(NTD);
       }
 
       assert(Ext->getGenericSignature() && "No generic signature.");
@@ -416,7 +416,7 @@ struct SynthesizedExtensionAnalyzer::Implementation {
       SubstitutionMap subMap;
       if (!BaseType->isExistentialType()) {
         if (auto *NTD = EnablingExt->getExtendedNominal())
-          subMap = BaseType->getContextSubstitutionMap(M, NTD);
+          subMap = BaseType->getContextSubstitutionMap(NTD);
       }
       if (handleRequirements(subMap,
                              EnablingExt,
@@ -647,7 +647,6 @@ collectDefaultImplementationForProtocolMembers(ProtocolDecl *PD,
 
 /// This walker will traverse the AST and report types for every expression.
 class ExpressionTypeCollector: public SourceEntityWalker {
-  ModuleDecl &Module;
   SourceManager &SM;
   unsigned int BufferId;
   std::vector<ExpressionTypeInfo> &Results;
@@ -701,7 +700,7 @@ class ExpressionTypeCollector: public SourceEntityWalker {
 
     // Collecting protocols conformed by this expressions that are in the list.
     for (auto Proto: InterestedProtocols) {
-      if (Module.checkConformance(E->getType(), Proto.first)) {
+      if (checkConformance(E->getType(), Proto.first)) {
         Conformances.push_back(Proto.second);
       }
     }
@@ -729,7 +728,7 @@ public:
       llvm::MapVector<ProtocolDecl *, StringRef> &InterestedProtocols,
       std::vector<ExpressionTypeInfo> &Results, bool FullyQualified,
       bool CanonicalType, llvm::raw_ostream &OS)
-      : Module(*SF.getParentModule()), SM(SF.getASTContext().SourceMgr),
+      : SM(SF.getASTContext().SourceMgr),
         BufferId(*SF.getBufferID()), Results(Results), OS(OS),
         InterestedProtocols(InterestedProtocols),
         FullyQualified(FullyQualified), CanonicalType(CanonicalType) {}
@@ -941,11 +940,56 @@ bool swift::isMemberDeclApplied(const DeclContext *DC, Type BaseTy,
     IsDeclApplicableRequest(DeclApplicabilityOwner(DC, BaseTy, VD)), false);
 }
 
+Type swift::tryMergeBaseTypeForCompletionLookup(Type ty1, Type ty2,
+                                                DeclContext *dc) {
+  // Easy case, equivalent so just pick one.
+  if (ty1->isEqual(ty2))
+    return ty1;
+
+  // Check to see if one is an optional of another. In that case, prefer the
+  // optional since we can unwrap a single level when doing a lookup.
+  {
+    SmallVector<Type, 4> ty1Optionals;
+    SmallVector<Type, 4> ty2Optionals;
+    auto ty1Unwrapped = ty1->lookThroughAllOptionalTypes(ty1Optionals);
+    auto ty2Unwrapped = ty2->lookThroughAllOptionalTypes(ty2Optionals);
+
+    if (ty1Unwrapped->isEqual(ty2Unwrapped)) {
+      // We currently only unwrap a single level of optional, so if the
+      // difference is greater, don't merge.
+      if (ty1Optionals.size() == 1 && ty2Optionals.empty())
+        return ty1;
+      if (ty2Optionals.size() == 1 && ty1Optionals.empty())
+        return ty2;
+    }
+    // We don't want to consider subtyping for optional mismatches since
+    // optional promotion is modelled as a subtype, which isn't useful for us
+    // (i.e if we have T? and U, preferring U would miss members on T?).
+    if (ty1Optionals.size() != ty2Optionals.size())
+      return Type();
+  }
+
+  // In general we want to prefer a subtype over a supertype.
+  if (isSubtypeOf(ty1, ty2, dc))
+    return ty1;
+  if (isSubtypeOf(ty2, ty1, dc))
+    return ty2;
+
+  // Incomparable, return null.
+  return Type();
+}
+
 bool swift::isConvertibleTo(Type T1, Type T2, bool openArchetypes,
                             DeclContext &DC) {
   return evaluateOrDefault(DC.getASTContext().evaluator,
     TypeRelationCheckRequest(TypeRelationCheckInput(&DC, T1, T2,
       TypeRelation::ConvertTo, openArchetypes)), false);
+}
+
+bool swift::isSubtypeOf(Type T1, Type T2, DeclContext *DC) {
+  return evaluateOrDefault(DC->getASTContext().evaluator,
+    TypeRelationCheckRequest(TypeRelationCheckInput(DC, T1, T2,
+      TypeRelation::SubtypeOf, /*openArchetypes*/ false)), false);
 }
 
 Type swift::getRootTypeOfKeypathDynamicMember(SubscriptDecl *SD) {
@@ -978,9 +1022,8 @@ swift::getShorthandShadows(CaptureListExpr *CaptureList, DeclContext *DC) {
     }
 
     if (auto UDRE = dyn_cast<UnresolvedDeclRefExpr>(Init)) {
-      if (DC) {
-        Init = resolveDeclRefExpr(UDRE, DC, /*replaceInvalidRefsWithErrors=*/false);
-      }
+      if (DC)
+        Init = resolveDeclRefExpr(UDRE, DC);
     }
 
     auto *ReferencedVar = Init->getReferencedDecl().getDecl();
@@ -1001,9 +1044,8 @@ swift::getShorthandShadows(LabeledConditionalStmt *CondStmt, DeclContext *DC) {
 
     Expr *Init = Cond.getInitializer();
     if (auto UDRE = dyn_cast<UnresolvedDeclRefExpr>(Init)) {
-      if (DC) {
-        Init = resolveDeclRefExpr(UDRE, DC, /*replaceInvalidRefsWithErrors=*/false);
-      }
+      if (DC)
+        Init = resolveDeclRefExpr(UDRE, DC);
     }
 
     auto ReferencedVar = Init->getReferencedDecl().getDecl();

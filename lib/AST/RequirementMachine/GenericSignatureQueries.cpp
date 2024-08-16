@@ -37,6 +37,7 @@
 #include "swift/AST/GenericEnvironment.h"
 #include "swift/AST/GenericSignature.h"
 #include "swift/AST/Module.h"
+#include "swift/Basic/Assertions.h"
 #include <vector>
 #include "NameLookup.h"
 #include "RequirementMachine.h"
@@ -242,12 +243,12 @@ RequirementMachine::getLongestValidPrefix(const MutableTerm &term) const {
       return prefix;
 
     case Symbol::Kind::Protocol:
-      assert(prefix.empty() &&
+      ASSERT(prefix.empty() &&
              "Protocol symbol can only appear at the start of a type term");
       break;
 
     case Symbol::Kind::GenericParam: {
-      assert(prefix.empty() &&
+      ASSERT(prefix.empty() &&
              "Generic parameter symbol can only appear at the start of a type term");
 
       if (std::find_if(Params.begin(), Params.end(),
@@ -280,6 +281,7 @@ RequirementMachine::getLongestValidPrefix(const MutableTerm &term) const {
     case Symbol::Kind::ConcreteType:
     case Symbol::Kind::ConcreteConformance:
     case Symbol::Kind::Shape:
+    case Symbol::Kind::PackElement:
       llvm::errs() <<"Invalid symbol in a type term: " << term << "\n";
       abort();
     }
@@ -348,7 +350,7 @@ static Type substPrefixType(Type type, unsigned suffixLength, Type prefixType,
   auto substBaseType = substPrefixType(memberType->getBase(), suffixLength - 1,
                                        prefixType, sig);
   return memberType->substBaseType(
-      substBaseType, LookUpConformanceInSignature(sig.getPointer()),
+      substBaseType, LookUpConformanceInModule(),
       std::nullopt);
 }
 
@@ -499,8 +501,6 @@ Type RequirementMachine::getReducedType(
 /// Determine if the given type parameter is valid with respect to this
 /// requirement machine's generic signature.
 bool RequirementMachine::isValidTypeParameter(Type type) const {
-  assert(type->isTypeParameter());
-
   auto term = Context.getMutableTermForType(type->getCanonicalType(),
                                             /*proto=*/nullptr);
   System.simplify(term);
@@ -524,23 +524,21 @@ bool RequirementMachine::isValidTypeParameter(Type type) const {
 ConformancePath
 RequirementMachine::getConformancePath(Type type,
                                        ProtocolDecl *protocol) {
-  assert(type->isTypeParameter());
-
   auto mutTerm = Context.getMutableTermForType(type->getCanonicalType(),
                                                /*proto=*/nullptr);
   System.simplify(mutTerm);
   verify(mutTerm);
 
-#ifndef NDEBUG
-  auto *props = Map.lookUpProperties(mutTerm);
-  assert(props &&
-         "Subject type of conformance access path should be known");
-  assert(!props->isConcreteType() &&
-         "Concrete types do not have conformance access paths");
-  auto conformsTo = props->getConformsTo();
-  assert(std::find(conformsTo.begin(), conformsTo.end(), protocol) &&
-         "Subject type of conformance access path must conform to protocol");
-#endif
+  if (CONDITIONAL_ASSERT_enabled()) {
+    auto *props = Map.lookUpProperties(mutTerm);
+    ASSERT(props &&
+           "Subject type of conformance access path should be known");
+    ASSERT(!props->isConcreteType() &&
+           "Concrete types do not have conformance access paths");
+    auto conformsTo = props->getConformsTo();
+    ASSERT(std::find(conformsTo.begin(), conformsTo.end(), protocol) &&
+          "Subject type of conformance access path must conform to protocol");
+  }
 
   auto term = Term::get(mutTerm, Context);
 
@@ -564,8 +562,7 @@ RequirementMachine::getConformancePath(Type type,
     auto key = std::make_pair(term, proto);
     auto inserted = ConformancePaths.insert(
         std::make_pair(key, path));
-    assert(inserted.second);
-    (void) inserted;
+    ASSERT(inserted.second);
 
     if (Stats)
       ++Stats->getFrontendCounters().NumConformancePathsRecorded;
@@ -723,7 +720,7 @@ RequirementMachine::lookupNestedType(Type depType, Identifier name) const {
   }
 
   if (bestAssocType) {
-    assert(bestAssocType->getOverriddenDecls().empty() &&
+    ASSERT(bestAssocType->getOverriddenDecls().empty() &&
            "Lookup should never keep a non-anchor associated type");
     return bestAssocType;
 
@@ -737,7 +734,7 @@ RequirementMachine::lookupNestedType(Type depType, Identifier name) const {
 
 MutableTerm
 RequirementMachine::getReducedShapeTerm(Type type) const {
-  assert(type->isParameterPack());
+  ASSERT(type->isParameterPack());
 
   auto term = Context.getMutableTermForType(type->getCanonicalType(),
                                             /*proto=*/nullptr);
@@ -779,7 +776,9 @@ bool RequirementMachine::haveSameShape(Type type1, Type type2) const {
 }
 
 void RequirementMachine::verify(const MutableTerm &term) const {
-#ifndef NDEBUG
+  if (!CONDITIONAL_ASSERT_enabled())
+    return;
+
   // If the term is in the generic parameter domain, ensure we have a valid
   // generic parameter.
   if (term.begin()->getKind() == Symbol::Kind::GenericParam) {
@@ -806,6 +805,7 @@ void RequirementMachine::verify(const MutableTerm &term) const {
       switch (symbol.getKind()) {
       case Symbol::Kind::Protocol:
       case Symbol::Kind::GenericParam:
+      case Symbol::Kind::PackElement:
         erased.add(symbol);
         continue;
 
@@ -827,7 +827,7 @@ void RequirementMachine::verify(const MutableTerm &term) const {
 
     switch (symbol.getKind()) {
     case Symbol::Kind::Name:
-      assert(!erased.empty());
+      ASSERT(!erased.empty());
       erased.add(symbol);
       break;
 
@@ -845,6 +845,7 @@ void RequirementMachine::verify(const MutableTerm &term) const {
     case Symbol::Kind::Superclass:
     case Symbol::Kind::ConcreteType:
     case Symbol::Kind::ConcreteConformance:
+    case Symbol::Kind::PackElement:
       llvm::errs() << "Bad interior symbol " << symbol << " in " << term << "\n";
       abort();
       break;
@@ -864,5 +865,4 @@ void RequirementMachine::verify(const MutableTerm &term) const {
     dump(llvm::errs());
     abort();
   }
-#endif
 }

@@ -36,6 +36,7 @@
 #include "swift/AST/ProtocolConformanceRef.h"
 #include "swift/AST/SILLayout.h"
 #include "swift/AST/TypeCheckRequests.h"
+#include "swift/Basic/Assertions.h"
 #include "swift/Basic/Defer.h"
 #include "swift/Basic/SourceManager.h"
 #include "swift/ClangImporter/ClangImporter.h"
@@ -1137,6 +1138,7 @@ static char getParamConvention(ParameterConvention conv) {
     case ParameterConvention::Indirect_Inout: return 'l';
     case ParameterConvention::Indirect_InoutAliasable: return 'b';
     case ParameterConvention::Indirect_In_Guaranteed: return 'n';
+    case ParameterConvention::Indirect_In_CXX: return 'X';
     case ParameterConvention::Direct_Owned: return 'x';
     case ParameterConvention::Direct_Unowned: return 'y';
     case ParameterConvention::Direct_Guaranteed: return 'g';
@@ -1555,7 +1557,9 @@ void ASTMangler::appendType(Type type, GenericSignature sig,
     case TypeKind::PackArchetype:
     case TypeKind::ElementArchetype:
     case TypeKind::OpenedArchetype:
-      llvm_unreachable("Cannot mangle free-standing archetypes");
+      llvm::errs() << "Cannot mangle free-standing archetype: ";
+      tybase->dump(llvm::errs());
+      abort();
 
     case TypeKind::OpaqueTypeArchetype: {
       auto opaqueType = cast<OpaqueTypeArchetypeType>(tybase);
@@ -1967,19 +1971,16 @@ void ASTMangler::appendRetroactiveConformances(SubstitutionMap subMap,
 void ASTMangler::appendRetroactiveConformances(Type type, GenericSignature sig) {
   // Dig out the substitution map to use.
   SubstitutionMap subMap;
-  ModuleDecl *module;
+
   if (auto typeAlias = dyn_cast<TypeAliasType>(type.getPointer())) {
-    module = Mod ? Mod : typeAlias->getDecl()->getModuleContext();
     subMap = typeAlias->getSubstitutionMap();
   } else {
     if (type->hasUnboundGenericType())
       return;
 
-    auto nominal = type->getAnyNominal();
-    if (!nominal) return;
+    if (!type->getAnyNominal()) return;
 
-    module = Mod ? Mod : nominal->getModuleContext();
-    subMap = type->getContextSubstitutionMap(module, nominal);
+    subMap = type->getContextSubstitutionMap();
   }
 
   appendRetroactiveConformances(subMap, sig);
@@ -2061,7 +2062,8 @@ void ASTMangler::appendImplFunctionType(SILFunctionType *fn,
   case SILFunctionTypeIsolation::Unknown:
     break;
   case SILFunctionTypeIsolation::Erased:
-    OpArgs.push_back('A');
+    if (AllowIsolatedAny)
+      OpArgs.push_back('A');
     break;
   }
 
@@ -2164,7 +2166,7 @@ void ASTMangler::appendImplFunctionType(SILFunctionType *fn,
     appendType(param.getInterfaceType(), sig, forDecl);
   }
 
-  // Mangle if we have a transferring result.
+  // Mangle if we have a sending result.
   if (isInRecursion && fn->hasSendingResult())
     OpArgs.push_back('T');
 
@@ -3051,15 +3053,18 @@ void ASTMangler::appendFunctionSignature(AnyFunctionType *fn,
                                          const ValueDecl *forDecl,
                                          FunctionManglingKind functionMangling,
                                          bool isRecursedInto) {
-  appendFunctionResultType(fn->getResult(), sig, forDecl);
-  appendFunctionInputType(fn->getParams(), fn->getLifetimeDependenceInfo(), sig,
-                          forDecl, isRecursedInto);
+  appendFunctionResultType(fn->getResult(), sig,
+                           forDecl ? fn->getLifetimeDependenceForResult(forDecl)
+                                   : std::nullopt,
+                           forDecl);
+  appendFunctionInputType(fn, fn->getParams(), sig, forDecl, isRecursedInto);
   if (fn->isAsync())
     appendOperator("Ya");
   if (fn->isSendable())
     appendOperator("Yb");
   if (auto thrownError = fn->getEffectiveThrownErrorType()) {
-    if ((*thrownError)->isEqual(fn->getASTContext().getErrorExistentialType())){
+    if ((*thrownError)->isEqual(fn->getASTContext().getErrorExistentialType())
+        || !AllowTypedThrows) {
       appendOperator("K");
     } else {
       appendType(*thrownError, sig);
@@ -3095,24 +3100,13 @@ void ASTMangler::appendFunctionSignature(AnyFunctionType *fn,
     appendOperator("Yc");
     break;
   case FunctionTypeIsolation::Kind::Erased:
-    appendOperator("YA");
+    if (AllowIsolatedAny)
+      appendOperator("YA");
     break;
   }
 
   if (isRecursedInto && fn->hasSendingResult()) {
     appendOperator("YT");
-  }
-
-  if (auto *afd = dyn_cast_or_null<AbstractFunctionDecl>(forDecl)) {
-    if (afd->hasImplicitSelfDecl()) {
-      auto lifetimeDependenceKind =
-          fn->getLifetimeDependenceInfo().getLifetimeDependenceOnParam(
-              /*selfIndex*/ afd->getParameters()->size());
-      if (lifetimeDependenceKind) {
-        appendLifetimeDependenceKind(*lifetimeDependenceKind,
-                                     /*isSelfDependence*/ true);
-      }
-    }
   }
 }
 
@@ -3186,9 +3180,8 @@ getParameterFlagsForMangling(ParameterTypeFlags flags,
 }
 
 void ASTMangler::appendFunctionInputType(
-    ArrayRef<AnyFunctionType::Param> params,
-    LifetimeDependenceInfo lifetimeDependenceInfo, GenericSignature sig,
-    const ValueDecl *forDecl, bool isRecursedInto) {
+    AnyFunctionType *fnType, ArrayRef<AnyFunctionType::Param> params,
+    GenericSignature sig, const ValueDecl *forDecl, bool isRecursedInto) {
   auto defaultSpecifier = getDefaultOwnership(forDecl);
   
   switch (params.size()) {
@@ -3212,8 +3205,8 @@ void ASTMangler::appendFunctionInputType(
           Identifier(), type,
           getParameterFlagsForMangling(param.getParameterFlags(),
                                        defaultSpecifier, isRecursedInto),
-          lifetimeDependenceInfo.getLifetimeDependenceOnParam(/*paramIndex*/ 0),
-          sig, nullptr);
+          getLifetimeDependenceFor(fnType->getLifetimeDependencies(), 0), sig,
+          nullptr);
       break;
     }
 
@@ -3234,8 +3227,9 @@ void ASTMangler::appendFunctionInputType(
           Identifier(), param.getPlainType(),
           getParameterFlagsForMangling(param.getParameterFlags(),
                                        defaultSpecifier, isRecursedInto),
-          lifetimeDependenceInfo.getLifetimeDependenceOnParam(paramIndex), sig,
-          nullptr);
+          getLifetimeDependenceFor(fnType->getLifetimeDependencies(),
+                                   paramIndex),
+          sig, nullptr);
       appendListSeparator(isFirstParam);
       paramIndex++;
     }
@@ -3244,10 +3238,19 @@ void ASTMangler::appendFunctionInputType(
   }
 }
 
-void ASTMangler::appendFunctionResultType(Type resultType, GenericSignature sig,
-                                          const ValueDecl *forDecl) {
-  return resultType->isVoid() ? appendOperator("y")
-                              : appendType(resultType, sig, forDecl);
+void ASTMangler::appendFunctionResultType(
+    Type resultType, GenericSignature sig,
+    std::optional<LifetimeDependenceInfo> lifetimeDependence,
+    const ValueDecl *forDecl) {
+  if (resultType->isVoid()) {
+    appendOperator("y");
+  } else {
+    appendType(resultType, sig, forDecl);
+  }
+
+  if (AllowLifetimeDependencies && lifetimeDependence.has_value()) {
+    appendLifetimeDependence(*lifetimeDependence);
+  }
 }
 
 void ASTMangler::appendTypeList(Type listTy, GenericSignature sig,
@@ -3269,7 +3272,7 @@ void ASTMangler::appendTypeList(Type listTy, GenericSignature sig,
 
 void ASTMangler::appendParameterTypeListElement(
     Identifier name, Type elementType, ParameterTypeFlags flags,
-    std::optional<LifetimeDependenceKind> lifetimeDependenceKind,
+    std::optional<LifetimeDependenceInfo> lifetimeDependence,
     GenericSignature sig, const ValueDecl *forDecl) {
   if (auto *fnType = elementType->getAs<FunctionType>())
     appendFunctionType(fnType, sig, flags.isAutoClosure(), forDecl);
@@ -3300,9 +3303,8 @@ void ASTMangler::appendParameterTypeListElement(
   if (flags.isCompileTimeConst())
     appendOperator("Yt");
 
-  if (lifetimeDependenceKind) {
-    appendLifetimeDependenceKind(*lifetimeDependenceKind,
-                                 /*isSelfDependence*/ false);
+  if (AllowLifetimeDependencies && lifetimeDependence) {
+    appendLifetimeDependence(*lifetimeDependence);
   }
 
   if (!name.empty())
@@ -3311,21 +3313,18 @@ void ASTMangler::appendParameterTypeListElement(
     appendOperator("d");
 }
 
-void ASTMangler::appendLifetimeDependenceKind(LifetimeDependenceKind kind,
-                                              bool isSelfDependence) {
-  if (kind == LifetimeDependenceKind::Scope) {
-    if (isSelfDependence) {
-      appendOperator("YLs");
-    } else {
-      appendOperator("Yls");
-    }
-  } else {
-    assert(kind == LifetimeDependenceKind::Inherit);
-    if (isSelfDependence) {
-      appendOperator("YLi");
-    } else {
-      appendOperator("Yli");
-    }
+void ASTMangler::appendLifetimeDependence(LifetimeDependenceInfo info) {
+  if (auto *inheritIndices = info.getInheritIndices()) {
+    assert(!inheritIndices->isEmpty());
+    appendOperator("Yli");
+    appendIndexSubset(inheritIndices);
+    appendOperator("_");
+  }
+  if (auto *scopeIndices = info.getScopeIndices()) {
+    assert(!scopeIndices->isEmpty());
+    appendOperator("Yls");
+    appendIndexSubset(scopeIndices);
+    appendOperator("_");
   }
 }
 
@@ -3766,8 +3765,9 @@ void ASTMangler::appendClosureEntity(const AbstractClosureExpr *closure) {
 
   auto type = closure->getType();
 
-  // FIXME: CodeCompletionResultBuilder calls printValueDeclUSR() but the
-  // closure hasn't been type checked yet.
+  // FIXME: We can end up with a null type here in the presence of invalid
+  // code; the type-checker currently isn't strict about producing typed
+  // expression nodes when it fails. Once we enforce that, we can remove this.
   if (!type)
     type = ErrorType::get(closure->getASTContext());
 
@@ -3842,8 +3842,11 @@ CanType ASTMangler::getDeclTypeForMangling(
   parentGenericSig = GenericSignature();
 
   auto &C = decl->getASTContext();
-  if (decl->isInvalid()) {
-    if (isa<AbstractFunctionDecl>(decl)) {
+
+  auto ty = decl->getInterfaceType()->getReferenceStorageReferent();
+  if (ty->hasError()) {
+    if (isa<AbstractFunctionDecl>(decl) || isa<EnumElementDecl>(decl) ||
+        isa<SubscriptDecl>(decl)) {
       // FIXME: Verify ExtInfo state is correct, not working by accident.
       CanFunctionType::ExtInfo info;
       return CanFunctionType::get({AnyFunctionType::Param(C.TheErrorType)},
@@ -3851,8 +3854,6 @@ CanType ASTMangler::getDeclTypeForMangling(
     }
     return C.TheErrorType;
   }
-
-  Type ty = decl->getInterfaceType()->getReferenceStorageReferent();
 
   // If this declaration predates concurrency, adjust its type to not
   // contain type features that were not available pre-concurrency. This
@@ -4440,10 +4441,21 @@ void ASTMangler::appendMacroExpansionContext(
   ASTContext &ctx = origDC->getASTContext();
   SourceManager &sourceMgr = ctx.SourceMgr;
 
+  auto appendMacroExpansionLoc = [&]() {
+    appendIdentifier(origDC->getParentModule()->getName().str());
+
+    auto *SF = origDC->getParentSourceFile();
+    appendIdentifier(llvm::sys::path::filename(SF->getFilename()));
+
+    auto lineColumn = sourceMgr.getLineAndColumnInBuffer(loc);
+    appendOperator("fMX", Index(lineColumn.first), Index(lineColumn.second));
+  };
+
   auto bufferID = sourceMgr.findBufferContainingLoc(loc);
   auto generatedSourceInfo = sourceMgr.getGeneratedSourceInfo(bufferID);
-  if (!generatedSourceInfo)
-    return appendContext(origDC, nullBase, StringRef());
+  if (!generatedSourceInfo) {
+    return appendMacroExpansionLoc();
+  }
 
   SourceLoc outerExpansionLoc;
   DeclContext *outerExpansionDC;
@@ -4462,7 +4474,7 @@ void ASTMangler::appendMacroExpansionContext(
   case GeneratedSourceInfo::PrettyPrinted:
   case GeneratedSourceInfo::ReplacedFunctionBody:
   case GeneratedSourceInfo::DefaultArgument:
-    return appendContext(origDC, nullBase, StringRef());
+    return appendMacroExpansionLoc();
   }
   
   switch (generatedSourceInfo->kind) {
@@ -4519,7 +4531,7 @@ void ASTMangler::appendMacroExpansionContext(
   // If we hit the point where the structure is represented as a DeclContext,
   // we're done.
   if (origDC->isChildContextOf(outerExpansionDC))
-    return appendContext(origDC, nullBase, StringRef());
+    return appendMacroExpansionLoc();
 
   // Append our own context and discriminator.
   appendMacroExpansionContext(outerExpansionLoc, origDC);

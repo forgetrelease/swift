@@ -20,6 +20,7 @@
 #include "swift/AST/GenericSignature.h"
 #include "swift/AST/Requirement.h"
 #include "swift/AST/Types.h"
+#include "swift/Basic/Assertions.h"
 
 using namespace swift;
 
@@ -135,7 +136,7 @@ GenericSignature swift::buildGenericSignatureWithCapturedEnvironments(
     case GenericEnvironment::Kind::OpenedExistential: {
       auto constraint = genericEnv->getOpenedExistentialType();
       if (auto existential = constraint->getAs<ExistentialType>())
-        constraint = existential->getConstraintType();
+        constraint = existential->getConstraintType()->mapTypeOutOfContext();
       collector.addOpenedExistential(constraint);
       continue;
     }

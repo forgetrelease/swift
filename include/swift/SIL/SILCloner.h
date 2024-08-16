@@ -17,6 +17,7 @@
 #ifndef SWIFT_SIL_SILCLONER_H
 #define SWIFT_SIL_SILCLONER_H
 
+#include "swift/AST/ConformanceLookup.h"
 #include "swift/AST/GenericEnvironment.h"
 #include "swift/AST/ProtocolConformance.h"
 #include "swift/SIL/BasicBlockUtils.h"
@@ -50,7 +51,7 @@ struct SubstitutionMapWithLocalArchetypes {
                                     Type substType,
                                     ProtocolDecl *proto) {
     if (isa<LocalArchetypeType>(origType))
-      return proto->getParentModule()->lookupConformance(substType, proto);
+      return swift::lookupConformance(substType, proto);
     if (SubsMap)
       return SubsMap->lookupConformance(origType, proto);
 
@@ -86,6 +87,10 @@ protected:
   /// The old-to-new block map. Some entries may be premapped with original
   /// blocks.
   llvm::DenseMap<SILBasicBlock*, SILBasicBlock*> BBMap;
+
+  /// Blocks, where edge-spitting may have "converted" terminator result
+  /// arguments to phi-arguments.
+  llvm::SmallVector<SILBasicBlock *> blocksWithNewPhiArgs;
 
 private:
   /// MARK: Private state hidden from CRTP extensions.
@@ -230,6 +235,9 @@ public:
           Functor.SubsMap->dump(llvm::errs());
         llvm::errs() << "\nsubstitution map:\n";
         Subs.dump(llvm::errs());
+        llvm::errs() << "\n";
+        llvm::errs() << "\ncomposed substitution map:\n";
+        substSubs.dump(llvm::errs());
         llvm::errs() << "\n";
         abort();
       }
@@ -872,9 +880,15 @@ void SILCloner<ImplClass>::visitBlocksDepthFirst(SILBasicBlock *startBB) {
             && isa<BranchInst>(BB->getTerminator())) {
           continue;
         }
+        TermInst *term = BB->getTerminator();
+
+        // After edge-spitting, terminator result arguments become phi arguments.
+        if (!isa<BranchInst>(term))
+          blocksWithNewPhiArgs.push_back(BB->getSuccessors()[succIdx]);
+
         // This predecessor has multiple successors, so cloning it without
         // cloning its successors would create a critical edge.
-        splitEdge(BB->getTerminator(), succIdx, DomTree);
+        splitEdge(term, succIdx, DomTree);
         assert(!BBMap.count(BB->getSuccessors()[succIdx]));
       }
       // Map the successor to a new BB. Layout the cloned blocks in the order
@@ -2198,10 +2212,10 @@ void SILCloner<ImplClass>::visitDestroyValueInst(DestroyValueInst *Inst) {
                   RefCountingInst::Atomicity::Atomic));
   }
 
-  recordClonedInstruction(
-      Inst, getBuilder().createDestroyValue(getOpLocation(Inst->getLoc()),
-                                            getOpValue(Inst->getOperand()),
-                                            Inst->poisonRefs()));
+  recordClonedInstruction(Inst, getBuilder().createDestroyValue(
+                                    getOpLocation(Inst->getLoc()),
+                                    getOpValue(Inst->getOperand()),
+                                    Inst->poisonRefs(), Inst->isDeadEnd()));
 }
 
 template <typename ImplClass>
@@ -3165,7 +3179,8 @@ SILCloner<ImplClass>::visitDeallocBoxInst(DeallocBoxInst *Inst) {
   getBuilder().setCurrentDebugScope(getOpScope(Inst->getDebugScope()));
   recordClonedInstruction(
       Inst, getBuilder().createDeallocBox(getOpLocation(Inst->getLoc()),
-                                          getOpValue(Inst->getOperand())));
+                                          getOpValue(Inst->getOperand()),
+                                          Inst->isDeadEnd()));
 }
 
 template<typename ImplClass>

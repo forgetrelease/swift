@@ -79,7 +79,6 @@ split_embedded_sources(
   EMBEDDED ErrorType.swift
   EMBEDDED ExistentialCollection.swift
     NORMAL Filter.swift
-    NORMAL FixedArray.swift
     NORMAL FlatMap.swift
     NORMAL Flatten.swift
   EMBEDDED FloatingPoint.swift
@@ -98,7 +97,7 @@ split_embedded_sources(
   EMBEDDED Integers.swift
     NORMAL Join.swift
   EMBEDDED KeyPath.swift
-    NORMAL KeyValuePairs.swift
+  EMBEDDED KeyValuePairs.swift
   EMBEDDED LazyCollection.swift
   EMBEDDED LazySequence.swift
     NORMAL LegacyABI.swift
@@ -180,7 +179,7 @@ split_embedded_sources(
   EMBEDDED StringRangeReplaceableCollection.swift
   EMBEDDED StringStorage.swift
   EMBEDDED StringStorageBridge.swift
-    NORMAL StringSwitch.swift
+  EMBEDDED StringSwitch.swift
   EMBEDDED StringTesting.swift
   EMBEDDED StringUnicodeScalarView.swift
   EMBEDDED StringUTF16View.swift
@@ -227,7 +226,7 @@ split_embedded_sources(
   EMBEDDED FloatingPointRandom.swift
   EMBEDDED Instant.swift
   EMBEDDED Int128.swift
-    NORMAL Mirror.swift
+  EMBEDDED Mirror.swift
     NORMAL PlaygroundDisplay.swift
     NORMAL CommandLine.swift
   EMBEDDED SliceBuffer.swift
@@ -262,8 +261,8 @@ if(SWIFT_STDLIB_ENABLE_VECTOR_TYPES)
   list(APPEND SWIFTLIB_EMBEDDED_GYB_SOURCES SIMDConcreteOperations.swift.gyb SIMDVectorTypes.swift.gyb)
 endif()
 
-# Freestanding and Linux builds both have failures to resolve.
-if(NOT BOOTSTRAPPING_MODE STREQUAL "OFF" AND NOT SWIFT_FREESTANDING_FLAVOR AND NOT SWIFT_HOST_VARIANT_SDK STREQUAL "LINUX")
+# Freestanding and Linux/Android builds both have failures to resolve.
+if(NOT BOOTSTRAPPING_MODE STREQUAL "OFF" AND NOT SWIFT_FREESTANDING_FLAVOR AND NOT SWIFT_HOST_VARIANT_SDK STREQUAL "LINUX" AND NOT SWIFT_HOST_VARIANT_SDK STREQUAL "ANDROID")
   list(APPEND SWIFTLIB_SOURCES ObjectIdentifier+DebugDescription.swift)
 endif()
 
@@ -413,7 +412,8 @@ add_swift_target_library(swiftCore
 # i.e. there is no .o or .a file produced (no binary code is actually produced)
 # and only users of a library are going to actually compile any needed code.
 if(SWIFT_SHOULD_BUILD_EMBEDDED_STDLIB)
-  add_custom_target(embedded-stdlib ALL)
+  add_custom_target(embedded-stdlib)
+  add_dependencies(embedded-libraries embedded-stdlib)
 
   set(SWIFT_ENABLE_REFLECTION OFF)
   set(SWIFT_STDLIB_SUPPORT_BACK_DEPLOYMENT OFF)

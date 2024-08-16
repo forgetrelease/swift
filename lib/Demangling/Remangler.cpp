@@ -720,7 +720,7 @@ ManglingError Remangler::mangleAllocator(Node *node, unsigned depth) {
 }
 
 ManglingError Remangler::mangleArgumentTuple(Node *node, unsigned depth) {
-  Node *Child = skipType(getSingleChild(node));
+  Node *Child = skipType(node->getChild(0));
   if (Child->getKind() == Node::Kind::Tuple &&
       Child->getNumChildren() == 0) {
     Buffer << 'y';
@@ -1978,7 +1978,7 @@ ManglingError Remangler::mangleImplFunctionType(Node *node, unsigned depth) {
   Node *PatternSubs = nullptr;
   Node *InvocationSubs = nullptr;
   for (NodePointer Child : *node) {
-    switch (auto kind = Child->getKind()) {
+    switch (Child->getKind()) {
     case Node::Kind::ImplParameter:
     case Node::Kind::ImplResult:
     case Node::Kind::ImplYield:
@@ -2106,6 +2106,7 @@ ManglingError Remangler::mangleImplFunctionType(Node *node, unsigned depth) {
                 .Case("@inout", 'l')
                 .Case("@inout_aliasable", 'b')
                 .Case("@in_guaranteed", 'n')
+                .Case("@in_cxx", 'X')
                 .Case("@in_constant", 'c')
                 .Case("@owned", 'x')
                 .Case("@guaranteed", 'g')
@@ -2239,16 +2240,13 @@ ManglingError Remangler::mangleNoDerivative(Node *node, unsigned depth) {
   return ManglingError::Success;
 }
 
-ManglingError Remangler::mangleParamLifetimeDependence(Node *node,
-                                                       unsigned depth) {
-  RETURN_IF_ERROR(mangleChildNode(node, 1, depth + 1));
-  Buffer << "Yl" << (char)node->getFirstChild()->getIndex();
-  return ManglingError::Success;
-}
-
-ManglingError Remangler::mangleSelfLifetimeDependence(Node *node,
-                                                      unsigned depth) {
-  Buffer << "YL" << (char)node->getIndex();
+ManglingError Remangler::mangleLifetimeDependence(Node *node, unsigned depth) {
+  RETURN_IF_ERROR(mangleChildNode(node, 2, depth + 1));
+  Buffer
+      << "Yl"
+      << (char)node->getChild(0)->getIndex(); // mangle lifetime dependence kind
+  RETURN_IF_ERROR(mangleChildNode(node, 1, depth + 1)); // mangle index subset
+  Buffer << "_";
   return ManglingError::Success;
 }
 
@@ -3119,6 +3117,21 @@ ManglingError Remangler::mangle##Name##AttachedMacroExpansion( \
   return mangleChildNode(node, 3, depth + 1);                  \
 }
 #include "swift/Basic/MacroRoles.def"
+
+ManglingError Remangler::mangleMacroExpansionLoc(
+    Node *node, unsigned depth) {
+  RETURN_IF_ERROR(mangleChildNode(node, 0, depth + 1));
+  RETURN_IF_ERROR(mangleChildNode(node, 1, depth + 1));
+
+  auto line = node->getChild(2)->getIndex();
+  auto col = node->getChild(3)->getIndex();
+
+  Buffer << "fMX";
+  mangleIndex(line);
+  mangleIndex(col);
+
+  return ManglingError::Success;
+}
 
 ManglingError Remangler::mangleMacroExpansionUniqueName(
     Node *node, unsigned depth) {
