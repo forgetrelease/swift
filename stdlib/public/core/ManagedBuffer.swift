@@ -603,7 +603,9 @@ extension ManagedBufferPointer where Element: ~Copyable {
   }
 }
 
-extension ManagedBufferPointer: Equatable {
+@_preInverseGenerics
+extension ManagedBufferPointer: Equatable where Element: ~Copyable {
+  @_preInverseGenerics
   @inlinable
   public static func == (
     lhs: ManagedBufferPointer,
