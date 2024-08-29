@@ -3129,7 +3129,7 @@ public:
             printHead("optional_wrap", ASTNodeColor);
             break;
 
-          case KeyPathExpr::Component::Kind::Property:
+          case KeyPathExpr::Component::Kind::Member:
             printHead("property", ASTNodeColor);
             printDeclRefField(component.getDeclRef(), "decl");
             break;
@@ -3139,14 +3139,17 @@ public:
             printDeclRefField(component.getDeclRef(), "decl");
             break;
 
-          case KeyPathExpr::Component::Kind::UnresolvedProperty:
+          case KeyPathExpr::Component::Kind::UnresolvedMember:
             printHead("unresolved_property", ASTNodeColor);
             printFieldQuoted(component.getUnresolvedDeclName(), "decl_name",
                              IdentifierColor);
             break;
 
-          case KeyPathExpr::Component::Kind::UnresolvedSubscript:
-            printHead("unresolved_subscript", ASTNodeColor);
+          case KeyPathExpr::Component::Kind::UnresolvedApply:
+            printHead("unresolved_apply", ASTNodeColor);
+            break;
+          case KeyPathExpr::Component::Kind::Apply:
+            printHead("apply", ASTNodeColor);
             break;
           case KeyPathExpr::Component::Kind::Identity:
             printHead("identity", ASTNodeColor);
@@ -3166,7 +3169,7 @@ public:
             break;
           }
           printFieldQuoted(GetTypeOfKeyPathComponent(E, i), "type");
-          if (auto *args = component.getSubscriptArgs()) {
+          if (auto *args = component.getArgs()) {
             printRec(args);
           }
           printFoot();
