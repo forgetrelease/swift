@@ -535,8 +535,8 @@ SILIsolationInfo SILIsolationInfo::get(SILInstruction *inst) {
 
     // Then check if we have something that is nonisolated unsafe.
     if (isolation.isNonisolatedUnsafe()) {
-      // First check if our function_ref is a method of a global actor isolated
-      // type. In such a case, we create a global actor isolated
+      // First check if our function_ref is a method of a global-actor-isolated
+      // type. In such a case, we create a global-actor-isolated
       // nonisolated(unsafe) so that if we assign the value to another variable,
       // the variable still says that it is the appropriate global actor
       // isolated thing.
@@ -667,7 +667,7 @@ SILIsolationInfo SILIsolationInfo::get(SILInstruction *inst) {
     }
   }
 
-  // See if we have a struct_extract from a global actor isolated type.
+  // See if we have a struct_extract from a global-actor-isolated type.
   if (auto *sei = dyn_cast<StructExtractInst>(inst)) {
     auto varIsolation = swift::getActorIsolation(sei->getField());
     if (auto isolation =
@@ -688,12 +688,12 @@ SILIsolationInfo SILIsolationInfo::get(SILInstruction *inst) {
         varIsolation.isNonisolatedUnsafe());
   }
 
-  // See if we have an unchecked_enum_data from a global actor isolated type.
+  // See if we have an unchecked_enum_data from a global-actor-isolated type.
   if (auto *uedi = dyn_cast<UncheckedEnumDataInst>(inst)) {
     return SILIsolationInfo::getGlobalActorIsolated(uedi, uedi->getEnumDecl());
   }
 
-  // See if we have an unchecked_enum_data from a global actor isolated type.
+  // See if we have an unchecked_enum_data from a global-actor-isolated type.
   if (auto *utedi = dyn_cast<UncheckedTakeEnumDataAddrInst>(inst)) {
     return SILIsolationInfo::getGlobalActorIsolated(utedi,
                                                     utedi->getEnumDecl());
@@ -713,7 +713,7 @@ SILIsolationInfo SILIsolationInfo::get(SILInstruction *inst) {
     }
   }
 
-  // See if we have a convert function from a Sendable actor isolated function,
+  // See if we have a convert function from a Sendable actor-isolated function,
   // we want to treat the result of the convert function as being actor isolated
   // so that we cannot escape the value.
   //
@@ -818,7 +818,7 @@ SILIsolationInfo SILIsolationInfo::get(SILArgument *arg) {
   if (!SILIsolationInfo::isNonSendableType(arg->getType(), arg->getFunction()))
     return {};
 
-  // Handle a switch_enum from a global actor isolated type.
+  // Handle a switch_enum from a global-actor-isolated type.
   if (auto *phiArg = dyn_cast<SILPhiArgument>(arg)) {
     if (auto *singleTerm = phiArg->getSingleTerminator()) {
       if (auto *swi = dyn_cast<SwitchEnumInst>(singleTerm)) {
@@ -866,7 +866,7 @@ SILIsolationInfo SILIsolationInfo::get(SILArgument *arg) {
     // disconnected so we can construct the actor value. Users cannot write
     // allocator functions so we just need to worry about compiler generated
     // code. In the case of a non-actor, we can only have an allocator that is
-    // global actor isolated, so we will never hit this code path.
+    // global-actor-isolated, so we will never hit this code path.
     if (declRef.kind == SILDeclRef::Kind::Allocator) {
       if (fArg->getFunction()->getActorIsolation().isActorInstanceIsolated()) {
         return SILIsolationInfo::getDisconnected(false /*nonisolated(unsafe)*/);
@@ -1018,7 +1018,7 @@ bool SILIsolationInfo::hasSameIsolation(const SILIsolationInfo &other) const {
     // If either have an actor instance, and the actor instance doesn't match,
     // return false.
     //
-    // This ensures that cases like comparing two global actor isolated things
+    // This ensures that cases like comparing two global-actor-isolated things
     // do not hit this path.
     //
     // It also catches cases where we have a missing actor instance.

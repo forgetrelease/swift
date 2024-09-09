@@ -502,7 +502,7 @@ struct InOutSendingNotDisconnectedInfo {
   /// The 'inout sending' param that we are emitting an error for.
   SILValue inoutSendingParam;
 
-  /// The dynamic actor isolated region info of our 'inout sending' value's
+  /// The dynamic actor-isolated region info of our 'inout sending' value's
   /// region at the terminator inst.
   SILDynamicMergedIsolationInfo actorIsolatedRegionInfo;
 
@@ -1099,7 +1099,7 @@ struct UseAfterTransferDiagnosticInferrer::AutoClosureWalker : ASTWalker {
           continue;
         }
 
-        // Otherwise, we are calling an actor isolated function in the async
+        // Otherwise, we are calling an actor-isolated function in the async
         // let. Emit a better error.
 
         // See if we can find a valueDecl/name for our callee so we can
@@ -2523,7 +2523,7 @@ struct DiagnosticEvaluator final
       // Otherwise, just use the actual value.
       //
       // TODO: We are eventually going to want to be able to say that it is b/c
-      // of the actor isolated parameter. Maybe we should put in the actual
+      // of the actor-isolated parameter. Maybe we should put in the actual
       // region isolation info here.
       self->transferredNonTransferrable.emplace_back(
           partitionOp.getSourceOp(),

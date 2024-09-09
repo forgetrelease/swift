@@ -85,7 +85,7 @@ void SILGenFunction::emitExpectedExecutor() {
       !F.isDefer();
 
   // FIXME: Avoid loading and checking the expected executor if concurrency is
-  // unavailable. This is specifically relevant for MainActor isolated contexts,
+  // unavailable. This is specifically relevant for MainActor-isolated contexts,
   // which are allowed to be available on OSes where concurrency is not
   // available. rdar://106827064
 
