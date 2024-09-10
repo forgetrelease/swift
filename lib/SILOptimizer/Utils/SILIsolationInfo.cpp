@@ -866,7 +866,7 @@ SILIsolationInfo SILIsolationInfo::get(SILArgument *arg) {
     // disconnected so we can construct the actor value. Users cannot write
     // allocator functions so we just need to worry about compiler generated
     // code. In the case of a non-actor, we can only have an allocator that is
-    // global-actor-isolated, so we will never hit this code path.
+    // global-actor isolated, so we will never hit this code path.
     if (declRef.kind == SILDeclRef::Kind::Allocator) {
       if (fArg->getFunction()->getActorIsolation().isActorInstanceIsolated()) {
         return SILIsolationInfo::getDisconnected(false /*nonisolated(unsafe)*/);

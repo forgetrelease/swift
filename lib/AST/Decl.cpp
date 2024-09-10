@@ -11373,7 +11373,7 @@ ActorIsolation::forActorInstanceParameter(Expr *actor,
     return ActorIsolation::forNonisolated(/*unsafe*/false);
 
   // An isolated value of `<global actor type>.shared` is statically
-  // global-actor-isolated.
+  // global-actor isolated.
   if (auto *memberRef = dyn_cast<MemberRefExpr>(actor)) {
     // Check that the member declaration witnesses the `shared`
     // requirement of the `GlobalActor` protocol.
