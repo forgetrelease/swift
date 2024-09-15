@@ -125,6 +125,12 @@ Func withThrowingTaskGroup(of:returning:body:) has parameter 2 type change from 
 Func withTaskGroup(of:returning:body:) has been renamed to Func withTaskGroup(of:returning:isolation:body:)
 Func withTaskGroup(of:returning:body:) has mangled name changing from '_Concurrency.withTaskGroup<A, B where A: Swift.Sendable>(of: A.Type, returning: B.Type, body: (inout Swift.TaskGroup<A>) async -> B) async -> B' to '_Concurrency.withTaskGroup<A, B where A: Swift.Sendable>(of: A.Type, returning: B.Type, isolation: isolated Swift.Optional<Swift.Actor>, body: (inout Swift.TaskGroup<A>) async -> B) async -> B'
 
+// Adopt typed throws in Task<> and Task::value
+// (abi compat  was handled but this test does not understand the silgen_name trickery)
+Accessor Task.value.Get() has mangled name changing from 'Swift.Task.value.getter : A' to 'Swift.Task.__abi_value.getter : A'
+Var Task.value has been renamed to Var __abi_value
+Var Task.value has mangled name changing from 'Swift.Task.value : A' to 'Swift.Task.__abi_value : A'
+
 // *** DO NOT DISABLE OR XFAIL THIS TEST. *** (See comment above.)
 
 
