@@ -699,7 +699,7 @@ autorelease in the callee.
   - A generic type that conforms to Actor or AnyActor.
 
   and must be the actor instance that a function is isolated to. Importantly
-  this means that global actor isolated nominal types are never
+  this means that global-actor-isolated nominal types are never
   ``@sil_isolated``. Only one parameter can ever be marked as ``@sil_isolated``
   since a function cannot be isolated to multiple actors at the same time.
 

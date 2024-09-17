@@ -221,5 +221,5 @@ class InheritConformance: ConformInExtension {
 }
 
 func testInheritedMainActorConformance() {
-  InheritConformance().f() // okay; this is not main actor isolated
+  InheritConformance().f() // okay; this is not MainActor isolated
 }
