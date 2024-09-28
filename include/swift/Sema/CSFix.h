@@ -465,8 +465,8 @@ enum class FixKind : uint8_t {
   /// Ignore an attempt to specialize a non-generic type.
   AllowConcreteTypeSpecialization,
 
-  /// Ignore an attempt to specialize a generic function.
-  AllowGenericFunctionSpecialization,
+  /// Ignore an attempt to specialize a (generic) function reference.
+  AllowFunctionSpecialization,
 
   /// Ignore an out-of-place \c then statement.
   IgnoreOutOfPlaceThenStmt,
@@ -619,6 +619,10 @@ public:
   bool diagnoseForAmbiguity(CommonFixesArray commonFixes) const override {
     return diagnose(*commonFixes.front().first);
   }
+
+  /// Assess the impact this fix is going to have at the given location.
+  static unsigned assessImpact(ConstraintSystem &cs,
+                               ConstraintLocator *atLoc);
 
   static TreatRValueAsLValue *create(ConstraintSystem &cs,
                                      ConstraintLocator *locator);
@@ -1926,14 +1930,11 @@ public:
 };
 
 class AllowInaccessibleMember final : public AllowInvalidMemberRef {
-  bool IsMissingImport;
-
   AllowInaccessibleMember(ConstraintSystem &cs, Type baseType,
                           ValueDecl *member, DeclNameRef name,
-                          ConstraintLocator *locator, bool isMissingImport)
+                          ConstraintLocator *locator)
       : AllowInvalidMemberRef(cs, FixKind::AllowInaccessibleMember, baseType,
-                              member, name, locator),
-        IsMissingImport(isMissingImport) {}
+                              member, name, locator) {}
 
 public:
   std::string getName() const override {
@@ -1948,8 +1949,7 @@ public:
 
   static AllowInaccessibleMember *create(ConstraintSystem &cs, Type baseType,
                                          ValueDecl *member, DeclNameRef name,
-                                         ConstraintLocator *locator,
-                                         bool isMissingImport);
+                                         ConstraintLocator *locator);
 
   static bool classof(const ConstraintFix *fix) {
     return fix->getKind() == FixKind::AllowInaccessibleMember;
@@ -2026,7 +2026,8 @@ public:
 
 class AllowInvalidRefInKeyPath final : public ConstraintFix {
   enum RefKind {
-    // Allow a reference to a static member as a key path component.
+    // Allow a reference to a static member as a key path component if it is
+    // declared in a module with built with Swift 6.0 compiler version or older.
     StaticMember,
     // Allow a reference to a declaration with mutating getter as
     // a key path component.
@@ -2042,11 +2043,12 @@ class AllowInvalidRefInKeyPath final : public ConstraintFix {
   } Kind;
 
   ValueDecl *Member;
+  Type BaseType;
 
-  AllowInvalidRefInKeyPath(ConstraintSystem &cs, RefKind kind,
+  AllowInvalidRefInKeyPath(ConstraintSystem &cs, Type baseType, RefKind kind,
                            ValueDecl *member, ConstraintLocator *locator)
       : ConstraintFix(cs, FixKind::AllowInvalidRefInKeyPath, locator),
-        Kind(kind), Member(member) {}
+        Kind(kind), Member(member), BaseType(baseType) {}
 
 public:
   std::string getName() const override {
@@ -2071,8 +2073,9 @@ public:
   bool diagnoseForAmbiguity(CommonFixesArray commonFixes) const override;
 
   /// Determine whether give reference requires a fix and produce one.
-  static AllowInvalidRefInKeyPath *
-  forRef(ConstraintSystem &cs, ValueDecl *member, ConstraintLocator *locator);
+  static AllowInvalidRefInKeyPath *forRef(ConstraintSystem &cs, Type baseType,
+                                          ValueDecl *member,
+                                          ConstraintLocator *locator);
 
   bool isEqual(const ConstraintFix *other) const;
 
@@ -2081,8 +2084,8 @@ public:
   }
 
 private:
-  static AllowInvalidRefInKeyPath *create(ConstraintSystem &cs, RefKind kind,
-                                          ValueDecl *member,
+  static AllowInvalidRefInKeyPath *create(ConstraintSystem &cs, Type baseType,
+                                          RefKind kind, ValueDecl *member,
                                           ConstraintLocator *locator);
 };
 
@@ -3750,17 +3753,19 @@ public:
   }
 };
 
-class AllowGenericFunctionSpecialization final : public ConstraintFix {
+class AllowFunctionSpecialization final : public ConstraintFix {
   ValueDecl *Decl;
 
-  AllowGenericFunctionSpecialization(ConstraintSystem &cs, ValueDecl *decl,
-                                     ConstraintLocator *locator)
-      : ConstraintFix(cs, FixKind::AllowGenericFunctionSpecialization, locator),
+  AllowFunctionSpecialization(ConstraintSystem &cs, ValueDecl *decl,
+                              ConstraintLocator *locator,
+                              FixBehavior fixBehavior)
+      : ConstraintFix(cs, FixKind::AllowFunctionSpecialization, locator,
+                      fixBehavior),
         Decl(decl) {}
 
 public:
   std::string getName() const override {
-    return "allow generic function specialization";
+    return "allow (generic) function specialization";
   }
 
   bool diagnose(const Solution &solution, bool asNote = false) const override;
@@ -3769,11 +3774,11 @@ public:
     return diagnose(*commonFixes.front().first);
   }
 
-  static AllowGenericFunctionSpecialization *
+  static AllowFunctionSpecialization *
   create(ConstraintSystem &cs, ValueDecl *decl, ConstraintLocator *locator);
 
   static bool classof(const ConstraintFix *fix) {
-    return fix->getKind() == FixKind::AllowGenericFunctionSpecialization;
+    return fix->getKind() == FixKind::AllowFunctionSpecialization;
   }
 };
 

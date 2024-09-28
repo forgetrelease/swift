@@ -9,6 +9,7 @@ add_swift_host_library(swiftAST STATIC
   AbstractSourceFileDepGraphFactory.cpp
   AccessNotes.cpp
   AccessRequests.cpp
+  ActorIsolation.cpp
   ArgumentList.cpp
   ASTBridging.cpp
   ASTContext.cpp
@@ -32,6 +33,7 @@ add_swift_host_library(swiftAST STATIC
   CaptureInfo.cpp
   ClangSwiftTypeCorrespondence.cpp
   ClangTypeConverter.cpp
+  Concurrency.cpp
   ConcreteDeclRef.cpp
   ConformanceLookup.cpp
   ConformanceLookupTable.cpp
@@ -41,6 +43,7 @@ add_swift_host_library(swiftAST STATIC
   DiagnosticBridge.cpp
   DiagnosticConsumer.cpp
   DiagnosticEngine.cpp
+  DiagnosticGroups.cpp
   DiagnosticList.cpp
   DistributedDecl.cpp
   DocComment.cpp

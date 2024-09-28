@@ -24,6 +24,7 @@
 #include "swift/AST/ConformanceLookup.h"
 #include "swift/AST/DiagnosticSuppression.h"
 #include "swift/AST/ExistentialLayout.h"
+#include "swift/AST/GenericEnvironment.h"
 #include "swift/AST/Initializer.h"
 #include "swift/AST/PrettyStackTrace.h"
 #include "swift/AST/SubstitutionMap.h"
@@ -201,10 +202,8 @@ bool TypeVariableType::Implementation::isOpaqueType() const {
   if (!GP)
     return false;
 
-  if (auto *GPT = GP->getType()->getAs<GenericTypeParamType>()) {
-    auto *decl = GPT->getDecl();
-    return decl && decl->isOpaqueType();
-  }
+  if (auto *GPT = GP->getType()->getAs<GenericTypeParamType>())
+    return (GPT->getOpaqueDecl() != nullptr);
 
   return false;
 }
@@ -326,53 +325,40 @@ void ParentConditionalConformance::diagnoseConformanceStack(
 }
 
 namespace {
-/// Produce any additional syntactic diagnostics for the body of a function
-/// that had a result builder applied.
-class FunctionSyntacticDiagnosticWalker : public ASTWalker {
-  SmallVector<DeclContext *, 4> dcStack;
+/// Produce any additional syntactic diagnostics for a SyntacticElementTarget.
+class SyntacticDiagnosticWalker final : public ASTWalker {
+  const SyntacticElementTarget &Target;
+  bool IsTopLevelExprStmt;
+
+  SyntacticDiagnosticWalker(const SyntacticElementTarget &target,
+                            bool isExprStmt)
+      : Target(target), IsTopLevelExprStmt(isExprStmt) {}
 
 public:
-  FunctionSyntacticDiagnosticWalker(DeclContext *dc) { dcStack.push_back(dc); }
+  static void check(const SyntacticElementTarget &target, bool isExprStmt) {
+    auto walker = SyntacticDiagnosticWalker(target, isExprStmt);
+    target.walk(walker);
+  }
 
   MacroWalking getMacroWalkingBehavior() const override {
     return MacroWalking::Expansion;
   }
 
   PreWalkResult<Expr *> walkToExprPre(Expr *expr) override {
-    // We skip out-of-place expr checking here since we've already performed it.
-    performSyntacticExprDiagnostics(expr, dcStack.back(), /*ctp*/ std::nullopt,
-                                    /*isExprStmt=*/false,
-                                    /*disableOutOfPlaceExprChecking*/ true);
-
-    if (auto closure = dyn_cast<ClosureExpr>(expr)) {
-      if (closure->isSeparatelyTypeChecked()) {
-        dcStack.push_back(closure);
-        return Action::Continue(expr);
-      }
-    }
-
+    auto isExprStmt = (expr == Target.getAsExpr()) ? IsTopLevelExprStmt : false;
+    performSyntacticExprDiagnostics(expr, Target.getDeclContext(), isExprStmt);
     return Action::SkipNode(expr);
   }
 
-  PostWalkResult<Expr *> walkToExprPost(Expr *expr) override {
-    if (auto closure = dyn_cast<ClosureExpr>(expr)) {
-      if (closure->isSeparatelyTypeChecked()) {
-        assert(dcStack.back() == closure);
-        dcStack.pop_back();
-      }
-    }
-
-    return Action::Continue(expr);
-  }
-
   PreWalkResult<Stmt *> walkToStmtPre(Stmt *stmt) override {
-    performStmtDiagnostics(stmt, dcStack.back());
+    performStmtDiagnostics(stmt, Target.getDeclContext());
     return Action::Continue(stmt);
   }
 
-  PreWalkResult<Pattern *> walkToPatternPre(Pattern *pattern) override {
-    return Action::SkipNode(pattern);
+  PreWalkAction walkToDeclPre(Decl *D) override {
+    return Action::VisitNodeIf(isa<PatternBindingDecl>(D));
   }
+
   PreWalkAction walkToTypeReprPre(TypeRepr *typeRepr) override {
     return Action::SkipNode();
   }
@@ -384,50 +370,7 @@ public:
 
 void constraints::performSyntacticDiagnosticsForTarget(
     const SyntacticElementTarget &target, bool isExprStmt) {
-  auto *dc = target.getDeclContext();
-  switch (target.kind) {
-  case SyntacticElementTarget::Kind::expression: {
-    // First emit diagnostics for the main expression.
-    performSyntacticExprDiagnostics(target.getAsExpr(), dc,
-                                    target.getExprContextualTypePurpose(),
-                                    isExprStmt);
-    return;
-  }
-
-  case SyntacticElementTarget::Kind::forEachPreamble: {
-    auto *stmt = target.getAsForEachStmt();
-
-    // First emit diagnostics for the main expression.
-    performSyntacticExprDiagnostics(stmt->getTypeCheckedSequence(), dc,
-                                    CTP_ForEachSequence, isExprStmt);
-
-    if (auto *whereExpr = stmt->getWhere())
-      performSyntacticExprDiagnostics(whereExpr, dc, CTP_Condition,
-                                      /*isExprStmt*/ false);
-    return;
-  }
-
-  case SyntacticElementTarget::Kind::function: {
-    // Check for out of place expressions. This needs to be done on the entire
-    // function body rather than on individual expressions since we need the
-    // context of the parent nodes.
-    auto *body = target.getFunctionBody();
-    diagnoseOutOfPlaceExprs(dc->getASTContext(), body,
-                            /*contextualPurpose*/ std::nullopt);
-
-    FunctionSyntacticDiagnosticWalker walker(dc);
-    body->walk(walker);
-    return;
-  }
-  case SyntacticElementTarget::Kind::closure:
-  case SyntacticElementTarget::Kind::stmtCondition:
-  case SyntacticElementTarget::Kind::caseLabelItem:
-  case SyntacticElementTarget::Kind::patternBinding:
-  case SyntacticElementTarget::Kind::uninitializedVar:
-    // Nothing to do for these.
-    return;
-  }
-  llvm_unreachable("Unhandled case in switch!");
+  SyntacticDiagnosticWalker::check(target, isExprStmt);
 }
 
 #pragma mark High-level entry points
@@ -637,7 +580,7 @@ Type TypeChecker::typeCheckParameterDefault(Expr *&defaultValue,
 
   // Find and open all of the generic parameters used by the parameter
   // and replace them with type variables.
-  auto contextualTy = paramInterfaceTy.transform([&](Type type) -> Type {
+  auto contextualTy = paramInterfaceTy.transformRec([&](Type type) -> std::optional<Type> {
     assert(!type->is<UnboundGenericType>());
 
     if (auto *GP = type->getAs<GenericTypeParamType>()) {
@@ -648,7 +591,7 @@ Type TypeChecker::typeCheckParameterDefault(Expr *&defaultValue,
       return cs.openGenericParameter(DC->getParent(), GP, genericParameters,
                                      locator);
     }
-    return type;
+    return std::nullopt;
   });
 
   auto containsTypes = [&](Type type, OpenedTypeMap &toFind) {
@@ -996,49 +939,78 @@ bool TypeChecker::typeCheckExprPattern(ExprPattern *EP, DeclContext *DC,
   return false;
 }
 
+static Type openTypeParameter(ConstraintSystem &cs,
+                              Type interfaceTy,
+                              GenericEnvironment *env,
+                llvm::DenseMap<SubstitutableType *, TypeVariableType *> &types) {
+  if (auto *memberTy = interfaceTy->getAs<DependentMemberType>()) {
+    return DependentMemberType::get(
+        openTypeParameter(cs, memberTy->getBase(), env, types),
+        memberTy->getAssocType());
+  }
+
+  auto *paramTy = interfaceTy->castTo<GenericTypeParamType>();
+  auto archetypeTy = env->mapTypeIntoContext(paramTy)->castTo<ArchetypeType>();
+
+  auto found = types.find(archetypeTy);
+  if (found != types.end())
+    return found->second;
+
+  auto locator = cs.getConstraintLocator({});
+  auto replacement = cs.createTypeVariable(locator,
+                                           TVO_CanBindToNoEscape);
+
+  // FIXME: This doesn't capture all requirements imposed on the archetype!
+  // We really need to be opening the generic signature instead.
+  if (auto superclass = archetypeTy->getSuperclass()) {
+    cs.addConstraint(ConstraintKind::Subtype, replacement,
+                     superclass, locator);
+  }
+  for (auto proto : archetypeTy->getConformsTo()) {
+    cs.addConstraint(ConstraintKind::ConformsTo, replacement,
+                     proto->getDeclaredInterfaceType(), locator);
+  }
+
+  types[archetypeTy] = replacement;
+  return replacement;
+}
+
 static Type replaceArchetypesWithTypeVariables(ConstraintSystem &cs,
                                                Type t) {
   llvm::DenseMap<SubstitutableType *, TypeVariableType *> types;
 
-  return t.subst(
-    [&](SubstitutableType *origType) -> Type {
-      auto found = types.find(origType);
-      if (found != types.end())
-        return found->second;
+  // FIXME: This operation doesn't really make sense with a generic function type.
+  // We should open the signature instead.
+  if (auto *gft = t->getAs<GenericFunctionType>()) {
+    t = FunctionType::get(gft->getParams(), gft->getResult(), gft->getExtInfo());
+  }
 
-      if (auto archetypeType = dyn_cast<ArchetypeType>(origType)) {
-        auto root = archetypeType->getRoot();
-        // For other nested types, fail here so the default logic in subst()
-        // for nested types applies.
-        if (root != archetypeType)
-          return Type();
+  return t.transformRec(
+    [&](TypeBase *origType) -> std::optional<Type> {
+      // FIXME: By folding primary and opaque archetypes together, this doesn't
+      // really capture the correct semantics for opaque archetypes.
+      if (auto archetypeTy = dyn_cast<ArchetypeType>(origType)) {
+        return openTypeParameter(cs,
+                                 archetypeTy->getInterfaceType(),
+                                 archetypeTy->getGenericEnvironment(),
+                                 types);
+      }
+
+      // FIXME: Remove this case
+      if (auto *paramTy = dyn_cast<GenericTypeParamType>(origType)) {
+        auto found = types.find(paramTy);
+        if (found != types.end())
+          return found->second;
 
         auto locator = cs.getConstraintLocator({});
         auto replacement = cs.createTypeVariable(locator,
                                                  TVO_CanBindToNoEscape);
-
-        if (auto superclass = archetypeType->getSuperclass()) {
-          cs.addConstraint(ConstraintKind::Subtype, replacement,
-                           superclass, locator);
-        }
-        for (auto proto : archetypeType->getConformsTo()) {
-          cs.addConstraint(ConstraintKind::ConformsTo, replacement,
-                           proto->getDeclaredInterfaceType(), locator);
-        }
-        types[origType] = replacement;
+        types[paramTy] = replacement;
         return replacement;
       }
 
-      // FIXME: Remove this case
-      assert(cast<GenericTypeParamType>(origType));
-      auto locator = cs.getConstraintLocator({});
-      auto replacement = cs.createTypeVariable(locator,
-                                               TVO_CanBindToNoEscape);
-      types[origType] = replacement;
-      return replacement;
-    },
-    MakeAbstractConformanceForGenericType(),
-    SubstFlags::SubstituteOpaqueArchetypes);
+      return std::nullopt;
+    });
 }
 
 bool TypeChecker::typesSatisfyConstraint(Type type1, Type type2,
@@ -2366,7 +2338,9 @@ ForcedCheckedCastExpr *swift::findForcedDowncast(ASTContext &ctx, Expr *expr) {
   return nullptr;
 }
 
-bool swift::canAddExplicitConsume(ModuleDecl *module, Expr *expr) {
+bool swift::canAddExplicitConsume(constraints::Solution &sol,
+                                  ModuleDecl *module,
+                                  Expr *expr) {
   expr = expr->getSemanticsProvidingExpr();
 
   // Is it already wrapped in a `consume`?
@@ -2374,7 +2348,8 @@ bool swift::canAddExplicitConsume(ModuleDecl *module, Expr *expr) {
     return false;
 
   // Is this expression valid to wrap inside a `consume`?
-  auto diags = findSyntacticErrorForConsume(module, SourceLoc(), expr);
+  auto diags = findSyntacticErrorForConsume(module, SourceLoc(), expr,
+                            [&](Expr *e) { return sol.getResolvedType(e); });
   return diags.empty();
 }
 
@@ -2397,10 +2372,6 @@ void ConstraintSystem::forEachExpr(
       if (!NewE)
         return Action::Stop();
 
-      if (auto closure = dyn_cast<ClosureExpr>(E)) {
-        if (!CS.participatesInInference(closure))
-          return Action::SkipNode(NewE);
-      }
       return Action::Continue(NewE);
     }
 

@@ -16,7 +16,9 @@
 #include "swift/AST/ASTContext.h"
 #include "swift/AST/DiagnosticsSema.h"
 #include "swift/AST/ImportCache.h"
+#include "swift/AST/Module.h"
 #include "swift/AST/ModuleDependencies.h"
+#include "swift/AST/PluginLoader.h"
 #include "swift/Basic/Assertions.h"
 #include "swift/Basic/Defer.h"
 #include "swift/Basic/FileTypes.h"
@@ -301,6 +303,45 @@ SerializedModuleLoaderBase::getModuleName(ASTContext &Ctx, StringRef modulePath,
   return ModuleFile::getModuleName(Ctx, modulePath, Name);
 }
 
+llvm::ErrorOr<llvm::StringSet<>>
+SerializedModuleLoaderBase::getMatchingPackageOnlyImportsOfModule(
+    Twine modulePath, bool isFramework, bool isRequiredOSSAModules,
+    StringRef SDKName, StringRef packageName, llvm::vfs::FileSystem *fileSystem,
+    PathObfuscator &recoverer) {
+  auto moduleBuf = fileSystem->getBufferForFile(modulePath);
+  if (!moduleBuf)
+    return moduleBuf.getError();
+
+  llvm::StringSet<> importedModuleNames;
+  // Load the module file without validation.
+  std::shared_ptr<const ModuleFileSharedCore> loadedModuleFile;
+  serialization::ValidationInfo loadInfo = ModuleFileSharedCore::load(
+      "", "", std::move(moduleBuf.get()), nullptr, nullptr, isFramework,
+      isRequiredOSSAModules, SDKName, recoverer, loadedModuleFile);
+
+  if (loadedModuleFile->getModulePackageName() != packageName)
+    return importedModuleNames;
+
+  for (const auto &dependency : loadedModuleFile->getDependencies()) {
+    if (dependency.isHeader())
+      continue;
+    if (!dependency.isPackageOnly())
+      continue;
+
+    // Find the top-level module name.
+    auto modulePathStr = dependency.getPrettyPrintedPath();
+    StringRef moduleName = modulePathStr;
+    auto dotPos = moduleName.find('.');
+    if (dotPos != std::string::npos)
+      moduleName = moduleName.slice(0, dotPos);
+
+    importedModuleNames.insert(moduleName);
+  }
+
+  return importedModuleNames;
+}
+
+
 std::error_code
 SerializedModuleLoaderBase::openModuleSourceInfoFileIfPresent(
     ImportPath::Element ModuleID,
@@ -438,6 +479,26 @@ SerializedModuleLoaderBase::getImportsOfModule(
                                                          importedHeader};
 }
 
+std::optional<MacroPluginDependency>
+SerializedModuleLoaderBase::resolveMacroPlugin(const ExternalMacroPlugin &macro,
+                                               StringRef packageName) {
+  if (macro.MacroAccess == ExternalMacroPlugin::Access::Internal)
+    return std::nullopt;
+
+  if (macro.MacroAccess == ExternalMacroPlugin::Access::Package &&
+      packageName != Ctx.LangOpts.PackageName)
+    return std::nullopt;
+
+  auto &loader = Ctx.getPluginLoader();
+  auto &entry =
+      loader.lookupPluginByModuleName(Ctx.getIdentifier(macro.ModuleName));
+  if (entry.libraryPath.empty() && entry.executablePath.empty())
+    return std::nullopt;
+
+  return MacroPluginDependency{entry.libraryPath.str(),
+                               entry.executablePath.str()};
+}
+
 llvm::ErrorOr<ModuleDependencyInfo>
 SerializedModuleLoaderBase::scanModuleFile(Twine modulePath, bool isFramework,
                                            bool isTestableImport) {
@@ -522,6 +583,15 @@ SerializedModuleLoaderBase::scanModuleFile(Twine modulePath, bool isFramework,
       optionalModuleImports, linkLibraries, importedHeader,
       definingModulePath, isFramework, loadedModuleFile->isStaticLibrary(),
       /*module-cache-key*/ "", userModuleVer);
+
+  for (auto &macro : loadedModuleFile->getExternalMacros()) {
+    auto deps =
+        resolveMacroPlugin(macro, loadedModuleFile->getModulePackageName());
+    if (!deps)
+      continue;
+    dependencies.addMacroDependency(macro.ModuleName, deps->LibraryPath,
+                                    deps->ExecutablePath);
+  }
 
   return std::move(dependencies);
 }
@@ -953,6 +1023,8 @@ LoadedFile *SerializedModuleLoaderBase::loadAST(
       M.setSerializePackageEnabled();
     if (!loadedModuleFile->getModuleABIName().empty())
       M.setABIName(Ctx.getIdentifier(loadedModuleFile->getModuleABIName()));
+    if (!loadedModuleFile->getPublicModuleName().empty())
+      M.setPublicModuleName(Ctx.getIdentifier(loadedModuleFile->getPublicModuleName()));
     if (loadedModuleFile->isConcurrencyChecked())
       M.setIsConcurrencyChecked();
     if (loadedModuleFile->hasCxxInteroperability()) {
@@ -1323,6 +1395,7 @@ bool swift::extractCompilerFlagsFromInterface(
   // we have loaded a Swift interface from a different-but-compatible
   // architecture slice. Use the compatible subarchitecture.
   for (unsigned I = 1; I < SubArgs.size(); ++I) {
+    // FIXME: Also fix up -target-variant (rdar://135322077).
     if (strcmp(SubArgs[I - 1], "-target") != 0) {
       continue;
     }
@@ -1685,6 +1758,11 @@ void SerializedASTFile::getImportedModules(
     SmallVectorImpl<ImportedModule> &imports,
     ModuleDecl::ImportFilter filter) const {
   File.getImportedModules(imports, filter);
+}
+
+void SerializedASTFile::getExternalMacros(
+    SmallVectorImpl<ExternalMacroPlugin> &macros) const {
+  File.getExternalMacros(macros);
 }
 
 void SerializedASTFile::collectLinkLibrariesFromImports(

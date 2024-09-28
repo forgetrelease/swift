@@ -14,14 +14,17 @@ add_swift_compiler_module(SIL
     Argument.swift
     BasicBlock.swift
     Builder.swift
+    Declarations.swift
     Effects.swift
     ForwardingInstruction.swift
     Function.swift
     FunctionConvention.swift
     GlobalVariable.swift
     Instruction.swift
+    Linkage.swift
     Location.swift
     Operand.swift
+    ProtocolConformance.swift
     Registration.swift
     SILStage.swift
     SubstitutionMap.swift

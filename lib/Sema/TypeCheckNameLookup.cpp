@@ -809,7 +809,7 @@ public:
 static void diagnoseMissingImportForMember(const ValueDecl *decl,
                                            SourceFile *sf, SourceLoc loc) {
   auto &ctx = sf->getASTContext();
-  auto definingModule = decl->getModuleContext();
+  auto definingModule = decl->getModuleContextForNameLookup();
   ctx.Diags.diagnose(loc, diag::candidate_from_missing_import,
                      decl->getDescriptiveKind(), decl->getName(),
                      definingModule);
@@ -823,22 +823,33 @@ diagnoseAndFixMissingImportForMember(const ValueDecl *decl, SourceFile *sf,
   diagnoseMissingImportForMember(decl, sf, loc);
 
   auto &ctx = sf->getASTContext();
-  auto definingModule = decl->getModuleContext();
+  auto definingModule = decl->getModuleContextForNameLookup();
   SourceLoc bestLoc = ctx.Diags.getBestAddImportFixItLoc(decl, sf);
   if (!bestLoc.isValid())
     return;
 
   llvm::SmallString<64> importText;
 
+  // Add flags that must be used consistently on every import in every file.
   auto fixItInfo = fixItCache.getInfo(definingModule);
   if (fixItInfo.flags.contains(ImportFlags::ImplementationOnly))
     importText += "@_implementationOnly ";
   if (fixItInfo.flags.contains(ImportFlags::WeakLinked))
     importText += "@_weakLinked ";
-  if (fixItInfo.flags.contains(ImportFlags::SPIOnly))
-    importText += "@_spiOnly ";
 
-  // @_spi imports.
+  auto explicitAccessLevel = fixItInfo.accessLevel;
+  bool isPublicImport =
+      explicitAccessLevel
+          ? *explicitAccessLevel >= AccessLevel::Public
+          : !ctx.LangOpts.hasFeature(Feature::InternalImportsByDefault);
+
+  // Add flags that are only appropriate on public imports.
+  if (isPublicImport) {
+    if (fixItInfo.flags.contains(ImportFlags::SPIOnly))
+      importText += "@_spiOnly ";
+  }
+
+  // Add @_spi groups if needed for the declaration.
   if (decl->isSPI()) {
     auto spiGroups = decl->getSPIGroups();
     if (!spiGroups.empty()) {
@@ -848,8 +859,8 @@ diagnoseAndFixMissingImportForMember(const ValueDecl *decl, SourceFile *sf,
     }
   }
 
-  if (auto accessLevel = fixItInfo.accessLevel) {
-    importText += getAccessLevelSpelling(*accessLevel);
+  if (explicitAccessLevel) {
+    importText += getAccessLevelSpelling(*explicitAccessLevel);
     importText += " ";
   }
 
@@ -863,8 +874,17 @@ diagnoseAndFixMissingImportForMember(const ValueDecl *decl, SourceFile *sf,
 bool swift::maybeDiagnoseMissingImportForMember(const ValueDecl *decl,
                                                 const DeclContext *dc,
                                                 SourceLoc loc) {
-  if (decl->findImport(dc))
+  if (dc->isDeclImported(decl))
     return false;
+
+  if (dc->getASTContext().LangOpts.EnableCXXInterop) {
+    // With Cxx interop enabled, there are some declarations that always belong
+    // to the Clang header import module which should always be implicitly
+    // visible. However, that module is not implicitly imported in source files
+    // so we need to special case it here and avoid diagnosing.
+    if (decl->getModuleContextForNameLookup()->isClangHeaderImportModule())
+      return false;
+  }
 
   auto sf = dc->getParentSourceFile();
   if (!sf)

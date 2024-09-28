@@ -272,6 +272,10 @@ public:
   getImportedModules(SmallVectorImpl<ImportedModule> &imports,
                      ModuleDecl::ImportFilter filter) const {}
 
+  /// Looks up which external macros are defined by this file.
+  virtual void
+  getExternalMacros(SmallVectorImpl<ExternalMacroPlugin> &macros) const {}
+
   /// Lists modules that are not imported from this file and used in API.
   virtual void getImplicitImportsForModuleInterface(
       SmallVectorImpl<ImportedModule> &imports) const {}
@@ -333,6 +337,12 @@ public:
   /// verified.
   virtual StringRef getExportedModuleName() const {
     return getParentModule()->getRealName().str();
+  }
+
+  /// Returns the public facing name of this module, only if it is set
+  /// explicitly.
+  virtual StringRef getPublicModuleName() const {
+    return {};
   }
 
   SWIFT_DEBUG_DUMPER(dumpDisplayDecls());

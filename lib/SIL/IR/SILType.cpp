@@ -25,6 +25,7 @@
 #include "swift/SIL/SILModule.h"
 #include "swift/SIL/Test.h"
 #include "swift/SIL/TypeLowering.h"
+#include "swift/Sema/Concurrency.h"
 #include <tuple>
 
 using namespace swift;
@@ -855,7 +856,7 @@ bool SILType::isDifferentiable(SILModule &M) const {
 
 Type
 TypeBase::replaceSubstitutedSILFunctionTypesWithUnsubstituted(SILModule &M) const {
-  return Type(const_cast<TypeBase *>(this)).transform([&](Type t) -> Type {
+  return Type(const_cast<TypeBase *>(this)).transformRec([&](TypeBase *t) -> std::optional<Type> {
     if (auto *f = t->getAs<SILFunctionType>()) {
       auto sft = f->getUnsubstitutedType(M);
       
@@ -907,7 +908,7 @@ TypeBase::replaceSubstitutedSILFunctionTypesWithUnsubstituted(SILModule &M) cons
                                   SubstitutionMap(),
                                   M.getASTContext());
     }
-    return t;
+    return std::nullopt;
   });
 }
 
@@ -1253,6 +1254,47 @@ SILType SILType::removingAnyMoveOnlyWrapping(const SILFunction *fn) {
 
 bool SILType::isSendable(SILFunction *fn) const {
   return getASTType()->isSendableType();
+}
+
+Type SILType::getRawLayoutSubstitutedLikeType() const {
+  auto rawLayout = getRawLayout();
+
+  if (!rawLayout)
+    return Type();
+
+  if (rawLayout->getSizeAndAlignment())
+    return Type();
+
+  auto structDecl = getStructOrBoundGenericStruct();
+  auto likeType = rawLayout->getResolvedLikeType(structDecl);
+  auto astT = getASTType();
+  auto subs = astT->getContextSubstitutionMap();
+  return likeType.subst(subs);
+}
+
+Type SILType::getRawLayoutSubstitutedCountType() const {
+  auto rawLayout = getRawLayout();
+
+  if (!rawLayout)
+    return Type();
+
+  if (rawLayout->getSizeAndAlignment() || rawLayout->getScalarLikeType())
+    return Type();
+
+  auto structDecl = getStructOrBoundGenericStruct();
+  auto countType = rawLayout->getResolvedCountType(structDecl);
+  auto astT = getASTType();
+  auto subs = astT->getContextSubstitutionMap();
+  return countType.subst(subs);
+}
+
+std::optional<DiagnosticBehavior>
+SILType::getConcurrencyDiagnosticBehavior(SILFunction *fn) const {
+  auto declRef = fn->getDeclRef();
+  if (!declRef)
+    return {};
+  auto *fromDC = declRef.getInnermostDeclContext();
+  return getASTType()->getConcurrencyDiagnosticBehaviorLimit(fromDC);
 }
 
 namespace swift::test {

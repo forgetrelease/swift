@@ -754,10 +754,7 @@ SILFunction *SILGenModule::getFunction(SILDeclRef constant,
 
   // If we have global actor isolation for our constant, put the isolation onto
   // the function.
-  if (auto isolation =
-          getActorIsolationOfContext(constant.getInnermostDeclContext())) {
-    F->setActorIsolation(isolation);
-  }
+  F->setActorIsolation(getActorIsolationOfContext(constant.getInnermostDeclContext()));
 
   assert(F && "SILFunction should have been defined");
 
@@ -806,6 +803,11 @@ bool SILGenModule::shouldSkipDecl(Decl *D) {
 
   if (!getASTContext().SILOpts.SkipNonExportableDecls)
     return false;
+
+  // Declarations nested in functions should be emitted whenever the function
+  // containing them should also be emitted.
+  if (auto funcContext = D->getDeclContext()->getOutermostFunctionContext())
+    return shouldSkipDecl(funcContext->getAsDecl());
 
   if (D->isExposedToClients())
     return false;
@@ -901,7 +903,7 @@ void SILGenModule::emitFunctionDefinition(SILDeclRef constant, SILFunction *f) {
     preEmitFunction(constant, f, loc);
     PrettyStackTraceSILFunction X("silgen emitBackDeploymentThunk", f);
     f->setBare(IsBare);
-    f->setThunk(IsThunk);
+    f->setThunk(IsBackDeployedThunk);
 
     SILGenFunction(*this, *f, dc).emitBackDeploymentThunk(constant);
 
@@ -1243,12 +1245,7 @@ void SILGenModule::preEmitFunction(SILDeclRef constant, SILFunction *F,
     F->setGenericEnvironment(genericEnv, capturedEnvs, forwardingSubs);
   }
 
-  // If we have global actor isolation for our constant, put the isolation onto
-  // the function.
-  if (auto isolation =
-          getActorIsolationOfContext(constant.getInnermostDeclContext())) {
-    F->setActorIsolation(isolation);
-  }
+  F->setActorIsolation(getActorIsolationOfContext(constant.getInnermostDeclContext()));
 
   // Create a debug scope for the function using astNode as source location.
   F->setDebugScope(new (M) SILDebugScope(Loc, F));
@@ -1876,9 +1873,10 @@ SILGenModule::canStorageUseStoredKeyPathComponent(AbstractStorageDecl *decl,
                                           expansion);
   switch (strategy.getKind()) {
   case AccessStrategy::Storage: {
-    // Keypaths rely on accessors to handle the special behavior of weak or
-    // unowned properties.
-    if (decl->getInterfaceType()->is<ReferenceStorageType>())
+    // Keypaths rely on accessors to handle the special behavior of weak,
+    // unowned, or static properties.
+    if (decl->getInterfaceType()->is<ReferenceStorageType>() ||
+        decl->isStatic())
       return false;
 
     // If the field offset depends on the generic instantiation, we have to
@@ -1976,13 +1974,14 @@ void SILGenModule::tryEmitPropertyDescriptor(AbstractStorageDecl *decl) {
 
   Type baseTy;
   if (decl->getDeclContext()->isTypeContext()) {
-    // TODO: Static properties should eventually be referenceable as
-    // keypaths from T.Type -> Element, viz `baseTy = MetatypeType::get(baseTy)`
-    assert(!decl->isStatic());
-    
+
     baseTy = decl->getDeclContext()->getSelfInterfaceType()
                  ->getReducedType(decl->getInnermostDeclContext()
                                       ->getGenericSignatureOfContext());
+    
+    if (decl->isStatic()) {
+      baseTy = MetatypeType::get(baseTy);
+    }
   } else {
     // TODO: Global variables should eventually be referenceable as
     // key paths from (), viz. baseTy = TupleType::getEmpty(getASTContext());
@@ -2015,143 +2014,97 @@ void SILGenModule::tryEmitPropertyDescriptor(AbstractStorageDecl *decl) {
   (void)SILProperty::create(M, /*serializedKind*/ 0, decl, component);
 }
 
-void SILGenModule::visitIfConfigDecl(IfConfigDecl *ICD) {
-  // Nothing to do for these kinds of decls - anything active has been added
-  // to the enclosing declaration.
-}
-
 void SILGenModule::visitPoundDiagnosticDecl(PoundDiagnosticDecl *PDD) {
   // Nothing to do for #error/#warning; they've already been emitted.
 }
 
-namespace {
+void SILGenModule::emitSourceFile(SourceFile *sf) {
+  // Type-check the file if we haven't already.
+  performTypeChecking(*sf);
 
-// An RAII object that constructs a \c SILGenModule instance.
-// On destruction, delayed definitions are automatically emitted.
-class SILGenModuleRAII {
-  SILGenModule SGM;
+  if (sf->isScriptMode()) {
+    emitEntryPoint(sf);
+  }
 
-public:
-  void emitSourceFile(SourceFile *sf) {
-    // Type-check the file if we haven't already.
-    performTypeChecking(*sf);
+  for (auto *D : sf->getTopLevelDecls()) {
+    // Emit auxiliary decls.
+    D->visitAuxiliaryDecls([&](Decl *auxiliaryDecl) {
+      visit(auxiliaryDecl);
+    });
 
-    if (sf->isScriptMode()) {
-      SGM.emitEntryPoint(sf);
-    }
+    visit(D);
+  }
 
-    for (auto *D : sf->getTopLevelDecls()) {
-      // Emit auxiliary decls.
-      D->visitAuxiliaryDecls([&](Decl *auxiliaryDecl) {
-        FrontendStatsTracer StatsTracer(SGM.getASTContext().Stats,
-                                        "SILgen-decl", auxiliaryDecl);
-        SGM.visit(auxiliaryDecl);
-      });
-
-      FrontendStatsTracer StatsTracer(SGM.getASTContext().Stats,
-                                      "SILgen-decl", D);
-      SGM.visit(D);
-    }
-
-    // FIXME: Visit macro-generated extensions separately.
-    //
-    // The code below that visits auxiliary decls of the top-level
-    // decls in the source file does not work for nested types with
-    // attached conformance macros:
-    // ```
-    // struct Outer {
-    //   @AddConformance struct Inner {}
-    // }
-    // ```
-    // Because the attached-to decl is not at the top-level. To fix this,
-    // visit the macro-generated conformances that are recorded in the
-    // synthesized file unit to cover all macro-generated extension decls.
-    if (auto *synthesizedFile = sf->getSynthesizedFile()) {
-      for (auto *D : synthesizedFile->getTopLevelDecls()) {
-        if (!isa<ExtensionDecl>(D))
-          continue;
-
-        auto *sf = D->getInnermostDeclContext()->getParentSourceFile();
-        if (sf->getFulfilledMacroRole() != MacroRole::Conformance &&
-            sf->getFulfilledMacroRole() != MacroRole::Extension)
-          continue;
-
-        FrontendStatsTracer StatsTracer(SGM.getASTContext().Stats,
-                                        "SILgen-decl", D);
-        SGM.visit(D);
-      }
-    }
-
-    for (Decl *D : sf->getHoistedDecls()) {
-      FrontendStatsTracer StatsTracer(SGM.getASTContext().Stats,
-                                      "SILgen-decl", D);
-      SGM.visit(D);
-    }
-
-    for (TypeDecl *TD : sf->getLocalTypeDecls()) {
-      FrontendStatsTracer StatsTracer(SGM.getASTContext().Stats,
-                                      "SILgen-tydecl", TD);
-      // FIXME: Delayed parsing would prevent these types from being added to
-      //        the module in the first place.
-      if (TD->getDeclContext()->getInnermostSkippedFunctionContext())
+  // FIXME: Visit macro-generated extensions separately.
+  //
+  // The code below that visits auxiliary decls of the top-level
+  // decls in the source file does not work for nested types with
+  // attached conformance macros:
+  // ```
+  // struct Outer {
+  //   @AddConformance struct Inner {}
+  // }
+  // ```
+  // Because the attached-to decl is not at the top-level. To fix this,
+  // visit the macro-generated conformances that are recorded in the
+  // synthesized file unit to cover all macro-generated extension decls.
+  if (auto *synthesizedFile = sf->getSynthesizedFile()) {
+    for (auto *D : synthesizedFile->getTopLevelDecls()) {
+      if (!isa<ExtensionDecl>(D))
         continue;
-      SGM.visit(TD);
-    }
 
-    // If the source file contains an artificial main, emit the implicit
-    // top-level code.
-    if (auto *mainDecl = sf->getMainDecl()) {
-      if (isa<FuncDecl>(mainDecl) &&
-          static_cast<FuncDecl *>(mainDecl)->hasAsync())
-        emitSILFunctionDefinition(
-            SILDeclRef::getAsyncMainDeclEntryPoint(mainDecl));
-      emitSILFunctionDefinition(SILDeclRef::getMainDeclEntryPoint(mainDecl));
+      auto *sf = D->getInnermostDeclContext()->getParentSourceFile();
+      if (sf->getFulfilledMacroRole() != MacroRole::Conformance &&
+          sf->getFulfilledMacroRole() != MacroRole::Extension)
+        continue;
+
+      visit(D);
     }
   }
 
-  void emitSymbolSource(SymbolSource Source) {
-    switch (Source.kind) {
-    case SymbolSource::Kind::SIL:
-      emitSILFunctionDefinition(Source.getSILDeclRef());
-      break;
-    case SymbolSource::Kind::Global:
-      SGM.addGlobalVariable(Source.getGlobal());
-      break;
-    case SymbolSource::Kind::IR:
-      llvm_unreachable("Unimplemented: Emission of LinkEntities");
-    case SymbolSource::Kind::Unknown:
-    case SymbolSource::Kind::LinkerDirective:
-      // Nothing to do
-      break;
+  for (Decl *D : sf->getHoistedDecls()) {
+    visit(D);
+  }
+
+  for (TypeDecl *TD : sf->getLocalTypeDecls()) {
+    // FIXME: Delayed parsing would prevent these types from being added to
+    //        the module in the first place.
+    if (TD->getDeclContext()->getInnermostSkippedFunctionContext())
+      continue;
+    visit(TD);
+  }
+
+  // If the source file contains an artificial main, emit the implicit
+  // top-level code.
+  if (auto *mainDecl = sf->getMainDecl()) {
+    if (isa<FuncDecl>(mainDecl) &&
+        static_cast<FuncDecl *>(mainDecl)->hasAsync()) {
+      auto ref = SILDeclRef::getAsyncMainDeclEntryPoint(mainDecl);
+      emitFunctionDefinition(ref, getFunction(ref, ForDefinition));
     }
+    auto ref = SILDeclRef::getMainDeclEntryPoint(mainDecl);
+    emitFunctionDefinition(ref, getFunction(ref, ForDefinition));
   }
+}
 
-  void emitSILFunctionDefinition(SILDeclRef ref) {
-    SGM.emitFunctionDefinition(ref, SGM.getFunction(ref, ForDefinition));
+void SILGenModule::emitSymbolSource(SymbolSource Source) {
+  switch (Source.kind) {
+  case SymbolSource::Kind::SIL: {
+    auto ref = Source.getSILDeclRef();
+    emitFunctionDefinition(ref, getFunction(ref, ForDefinition));
+    break;
   }
-
-  explicit SILGenModuleRAII(SILModule &M) : SGM{M, M.getSwiftModule()} {}
-
-  ~SILGenModuleRAII() {
-    // Emit any delayed definitions that were forced.
-    // Emitting these may in turn force more definitions, so we have to take
-    // care to keep pumping the queues.
-    while (!SGM.pendingForcedFunctions.empty()
-           || !SGM.pendingConformances.empty()) {
-      while (!SGM.pendingForcedFunctions.empty()) {
-        auto &front = SGM.pendingForcedFunctions.front();
-        SGM.emitFunctionDefinition(
-            front, SGM.getEmittedFunction(front, ForDefinition));
-        SGM.pendingForcedFunctions.pop_front();
-      }
-      while (!SGM.pendingConformances.empty()) {
-        (void)SGM.getWitnessTable(SGM.pendingConformances.front());
-        SGM.pendingConformances.pop_front();
-      }
-    }
+  case SymbolSource::Kind::Global:
+    addGlobalVariable(Source.getGlobal());
+    break;
+  case SymbolSource::Kind::IR:
+    llvm_unreachable("Unimplemented: Emission of LinkEntities");
+  case SymbolSource::Kind::Unknown:
+  case SymbolSource::Kind::LinkerDirective:
+    // Nothing to do
+    break;
   }
-};
-} // end anonymous namespace
+}
 
 std::unique_ptr<SILModule>
 ASTLoweringRequest::evaluate(Evaluator &evaluator,
@@ -2164,28 +2117,31 @@ ASTLoweringRequest::evaluate(Evaluator &evaluator,
   auto silMod = SILModule::createEmptyModule(desc.context, desc.conv,
                                              desc.opts, desc.irgenOptions);
 
+  auto &ctx = silMod->getASTContext();
+  FrontendStatsTracer tracer(ctx.Stats, "SILGen");
+
   // If all function bodies are being skipped there's no reason to do any
   // SIL generation.
   if (desc.opts.SkipFunctionBodies == FunctionBodySkipping::All)
     return silMod;
 
   // Skip emitting SIL if there's been any compilation errors
-  if (silMod->getASTContext().hadError() &&
-      silMod->getASTContext().LangOpts.AllowModuleWithCompilerErrors)
+  if (ctx.hadError() &&
+      ctx.LangOpts.AllowModuleWithCompilerErrors)
     return silMod;
 
-  SILGenModuleRAII scope(*silMod);
+  SILGenModule SGM(*silMod, silMod->getSwiftModule());
 
   // Emit a specific set of SILDeclRefs if needed.
   if (auto Sources = desc.SourcesToEmit) {
     for (auto Source : *Sources)
-      scope.emitSymbolSource(std::move(Source));
+      SGM.emitSymbolSource(std::move(Source));
   }
 
   // Emit any whole-files needed.
   for (auto file : desc.getFilesToEmit()) {
     if (auto *nextSF = dyn_cast<SourceFile>(file))
-      scope.emitSourceFile(nextSF);
+      SGM.emitSourceFile(nextSF);
   }
 
   // Also make sure to process any intermediate files that may contain SIL.
@@ -2197,6 +2153,23 @@ ASTLoweringRequest::evaluate(Evaluator &evaluator,
     auto *primary = desc.context.dyn_cast<FileUnit *>();
     silMod->getSILLoader()->getAllForModule(silMod->getSwiftModule()->getName(),
                                             primary);
+  }
+
+  // Emit any delayed definitions that were forced.
+  // Emitting these may in turn force more definitions, so we have to take
+  // care to keep pumping the queues.
+  while (!SGM.pendingForcedFunctions.empty()
+         || !SGM.pendingConformances.empty()) {
+    while (!SGM.pendingForcedFunctions.empty()) {
+      auto &front = SGM.pendingForcedFunctions.front();
+      SGM.emitFunctionDefinition(
+          front, SGM.getEmittedFunction(front, ForDefinition));
+      SGM.pendingForcedFunctions.pop_front();
+    }
+    while (!SGM.pendingConformances.empty()) {
+      (void)SGM.getWitnessTable(SGM.pendingConformances.front());
+      SGM.pendingConformances.pop_front();
+    }
   }
 
   return silMod;

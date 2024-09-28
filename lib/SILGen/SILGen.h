@@ -28,6 +28,7 @@
 namespace swift {
   class SILBasicBlock;
   class ForeignAsyncConvention;
+  class SymbolSource;
 
 namespace Lowering {
   class TypeConverter;
@@ -123,6 +124,12 @@ public:
   void operator=(SILGenModule const &) = delete;
 
   ASTContext &getASTContext() { return M.getASTContext(); }
+
+  /// Main entry point.
+  void emitSourceFile(SourceFile *sf);
+
+  /// Lazy entry point for Feature::LazyImmediate.
+  void emitSymbolSource(SymbolSource Source);
 
   llvm::StringMap<std::pair<std::string, /*isWinner=*/bool>> FileIDsByFilePath;
 
@@ -266,7 +273,6 @@ public:
   void visitFuncDecl(FuncDecl *fd);
   void visitPatternBindingDecl(PatternBindingDecl *vd);
   void visitTopLevelCodeDecl(TopLevelCodeDecl *td) {}
-  void visitIfConfigDecl(IfConfigDecl *icd);
   void visitPoundDiagnosticDecl(PoundDiagnosticDecl *PDD);
   void visitNominalTypeDecl(NominalTypeDecl *ntd);
   void visitExtensionDecl(ExtensionDecl *ed);

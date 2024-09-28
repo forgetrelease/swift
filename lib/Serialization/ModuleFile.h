@@ -127,6 +127,9 @@ private:
   /// All modules this module depends on.
   SmallVector<Dependency, 8> Dependencies;
 
+  /// External macro modules.
+  SmallVector<ExternalMacroPlugin, 4> MacroModuleNames;
+
 public:
   template <typename T>
   class Serialized {
@@ -587,6 +590,10 @@ public:
     return Core->ModuleExportAsName;
   }
 
+  StringRef getPublicModuleName() const {
+    return Core->PublicModuleName;
+  }
+
   /// The ABI name of the module.
   StringRef getModuleABIName() const {
     return Core->ModuleABIName;
@@ -779,6 +786,8 @@ public:
   /// Adds any imported modules to the given vector.
   void getImportedModules(SmallVectorImpl<ImportedModule> &results,
                           ModuleDecl::ImportFilter filter);
+
+  void getExternalMacros(SmallVectorImpl<ExternalMacroPlugin> &macros);
 
   void getImportDecls(SmallVectorImpl<Decl *> &Results);
 
@@ -1080,9 +1089,8 @@ public:
   maybeReadLifetimeDependence(unsigned numParams);
 
   // Reads lifetime dependence specifier from decl if present
-  bool maybeReadLifetimeDependenceSpecifier(
-      SmallVectorImpl<LifetimeDependenceSpecifier> &specifierList,
-      unsigned numDeclParams, bool hasSelf);
+  bool maybeReadLifetimeEntry(SmallVectorImpl<LifetimeEntry> &specifierList,
+                              unsigned numDeclParams, bool hasSelf);
 
   /// Reads inlinable body text from \c DeclTypeCursor, if present.
   std::optional<StringRef> maybeReadInlinableBodyText();

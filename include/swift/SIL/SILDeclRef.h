@@ -32,6 +32,10 @@ namespace llvm {
   class raw_ostream;
 }
 
+namespace clang {
+class Type;
+}
+
 namespace swift {
   enum class EffectsKind : uint8_t;
   class AbstractFunctionDecl;
@@ -204,6 +208,9 @@ struct SILDeclRef {
                const GenericSignatureImpl *, CustomAttr *>
       pointer;
 
+  // Type of closure thunk.
+  const clang::Type *thunkType = nullptr;
+
   /// Returns the type of AST node location being stored by the SILDeclRef.
   LocKind getLocKind() const {
     if (loc.is<ValueDecl *>())
@@ -257,11 +264,10 @@ struct SILDeclRef {
   ///   for the containing ClassDecl.
   /// - If 'loc' is a global VarDecl, this returns its GlobalAccessor
   ///   SILDeclRef.
-  explicit SILDeclRef(
-      Loc loc,
-      bool isForeign = false,
-      bool isDistributed = false,
-      bool isDistributedLocal = false);
+  explicit SILDeclRef(Loc loc, bool isForeign = false,
+                      bool isDistributed = false,
+                      bool isDistributedLocal = false,
+                      const clang::Type *thunkType = nullptr);
 
   /// See above put produces a prespecialization according to the signature.
   explicit SILDeclRef(Loc loc, GenericSignature prespecializationSig);
@@ -554,7 +560,7 @@ struct SILDeclRef {
                                                     AbstractFunctionDecl *func);
 
   /// Returns the availability of the decl for computing linkage.
-  std::optional<AvailabilityContext> getAvailabilityForLinkage() const;
+  std::optional<AvailabilityRange> getAvailabilityForLinkage() const;
 
   /// True if the referenced entity is some kind of thunk.
   bool isThunk() const;

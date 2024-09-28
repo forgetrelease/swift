@@ -4,6 +4,7 @@
 sil_stage raw
 
 import Builtin
+import Swift
 
 //////////////////
 // Declarations //
@@ -29,14 +30,14 @@ class Klass {
   func foo()
 }
 
+class C {}
+
 struct KlassPair {
   var lhs: Klass
   var rhs: Klass
 }
 
 sil @use_klass : $@convention(thin) (@guaranteed Klass) -> ()
-
-protocol Error {}
 
 ///////////
 // Tests //
@@ -612,4 +613,27 @@ bb0(%x : @guaranteed $any Error):
   %em = existential_metatype $@thick any Error.Type, %y : $@moveOnly (any Error)
   debug_value %em : $@thick any Error.Type, var, name "s", argno 1, expr op_deref
   return %em : $@thick any Error.Type
+}
+
+// CHECK-LABEL: sil [ossa] @existential_box :
+// CHECK:         %1 = open_existential_box %0 : $any Error
+// CHECK-LABEL: } // end sil function 'existential_box'
+sil [ossa] @existential_box : $@convention(thin) (@guaranteed any Error) -> () {
+bb0(%x : @guaranteed $any Error):
+  %y = copyable_to_moveonlywrapper [guaranteed] %x : $any Error
+  %o = open_existential_box %y : $@moveOnly (any Error) to $*@opened("01234567-89AB-CDEF-0123-000000000000", Error) Self
+  %r = tuple ()
+  return %r : $()
+}
+
+// CHECK-LABEL: sil [ossa] @builtin_tsanInoutAccess : {{.*}} {
+// CHECK:         builtin "tsanInoutAccess"
+// CHECK-LABEL: } // end sil function 'builtin_tsanInoutAccess'
+sil [ossa] @builtin_tsanInoutAccess : $@convention(thin) () -> () {
+bb0:
+  %1 = alloc_stack $@moveOnly C, var, name "b", type $@moveOnly C
+  %6 = builtin "tsanInoutAccess"(%1 : $*@moveOnly C) : $()
+  dealloc_stack %1 : $*@moveOnly C
+  %13 = tuple ()
+  return %13 : $()
 }

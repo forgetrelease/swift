@@ -91,9 +91,7 @@ private:
 
   ActorIsolation(Kind kind, Expr *actor, unsigned parameterIndex);
 
-  ActorIsolation(Kind kind, Type globalActor)
-      : globalActor(globalActor), kind(kind), isolatedByPreconcurrency(false),
-        silParsed(false), parameterIndex(0) {}
+  ActorIsolation(Kind kind, Type globalActor);
 
 public:
   // No-argument constructor needed for DenseMap use in PostfixCompletion.cpp
@@ -134,6 +132,8 @@ public:
   static ActorIsolation forGlobalActor(Type globalActor) {
     return ActorIsolation(GlobalActor, globalActor);
   }
+
+  static ActorIsolation forMainActor(ASTContext &ctx);
 
   static ActorIsolation forErased() {
     return ActorIsolation(Erased);
@@ -203,7 +203,6 @@ public:
   }
 
   NominalTypeDecl *getActor() const;
-  NominalTypeDecl *getActorOrNullPtr() const;
 
   VarDecl *getActorInstance() const;
 

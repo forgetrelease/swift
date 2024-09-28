@@ -937,6 +937,13 @@ function(add_swift_target_library_single target name)
     set(SWIFTLIB_SINGLE_SOURCES ${SWIFTLIB_SINGLE_SOURCES} ${SWIFTLIB_SINGLE_HEADERS} ${SWIFTLIB_SINGLE_TDS})
   endif()
 
+  # FIXME: swiftDarwin currently trips an assertion in SymbolGraphGen
+  if (SWIFTLIB_IS_STDLIB AND SWIFT_STDLIB_BUILD_SYMBOL_GRAPHS AND NOT ${name} STREQUAL "swiftDarwin")
+    list(APPEND SWIFTLIB_SINGLE_SWIFT_COMPILE_FLAGS "-Xfrontend;-emit-symbol-graph")
+    list(APPEND SWIFTLIB_SINGLE_SWIFT_COMPILE_FLAGS
+         "-Xfrontend;-emit-symbol-graph-dir;-Xfrontend;${out_lib_dir}/symbol-graph/${VARIANT_NAME}")
+  endif()
+
   if(MODULE)
     set(libkind MODULE)
   elseif(SWIFTLIB_SINGLE_OBJECT_LIBRARY)
@@ -1929,6 +1936,7 @@ function(add_swift_target_library name)
         SWIFT_COMPILE_FLAGS_WATCHOS
         SWIFT_COMPILE_FLAGS_XROS
         SWIFT_COMPILE_FLAGS_LINUX
+        SWIFT_COMPILE_FLAGS_LINUX_STATIC
         SWIFT_MODULE_DEPENDS
         SWIFT_MODULE_DEPENDS_ANDROID
         SWIFT_MODULE_DEPENDS_CYGWIN
@@ -1959,6 +1967,7 @@ function(add_swift_target_library name)
         SWIFT_SOURCES_DEPENDS_FREEBSD
         SWIFT_SOURCES_DEPENDS_OPENBSD
         SWIFT_SOURCES_DEPENDS_LINUX
+        SWIFT_SOURCES_DEPENDS_LINUX_STATIC
         SWIFT_SOURCES_DEPENDS_CYGWIN
         SWIFT_SOURCES_DEPENDS_HAIKU
         SWIFT_SOURCES_DEPENDS_WASI
@@ -2212,6 +2221,9 @@ function(add_swift_target_library name)
     elseif(sdk STREQUAL "LINUX")
       list(APPEND swiftlib_swift_compile_flags_all
            ${SWIFTLIB_SWIFT_COMPILE_FLAGS_LINUX})
+    elseif(sdk STREQUAL "LINUX_STATIC")
+      list(APPEND swiftlib_swift_compile_flags_all
+           ${SWIFTLIB_SWIFT_COMPILE_FLAGS_LINUX_STATIC})
     elseif(sdk STREQUAL "WINDOWS")
       # FIXME: https://github.com/apple/swift/issues/44614
       # static and shared are not mutually exclusive; however since we do a
@@ -2227,7 +2239,6 @@ function(add_swift_target_library name)
         list(APPEND swiftlib_swift_compile_flags_all -D_LIB)
       endif()
     endif()
-
 
     # Collect architecture agnostic SDK linker flags
     set(swiftlib_link_flags_all ${SWIFTLIB_LINK_FLAGS})
@@ -2256,6 +2267,8 @@ function(add_swift_target_library name)
       list(APPEND sources ${SWIFTLIB_SWIFT_SOURCES_DEPENDS_OPENBSD})
     elseif(sdk STREQUAL "LINUX" OR sdk STREQUAL "ANDROID")
       list(APPEND sources ${SWIFTLIB_SWIFT_SOURCES_DEPENDS_LINUX})
+    elseif(sdk STREQUAL "LINUX_STATIC")
+      list(APPEND sources ${SWIFTLIB_SWIFT_SOURCES_DEPENDS_LINUX_STATIC})
     elseif(sdk STREQUAL "CYGWIN")
       list(APPEND sources ${SWIFTLIB_SWIFT_SOURCES_DEPENDS_CYGWIN})
     elseif(sdk STREQUAL "HAIKU")

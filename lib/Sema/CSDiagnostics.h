@@ -203,6 +203,11 @@ protected:
           [](GenericTypeParamType *, Type) {});
 
   bool conformsToKnownProtocol(Type type, KnownProtocolKind protocol) const;
+
+  /// Retrieve an editor placeholder with a given description, or a given
+  /// type if specified.
+  StringRef getEditorPlaceholder(StringRef description, Type ty,
+                                 llvm::SmallVectorImpl<char> &scratch) const;
 };
 
 /// Base class for all of the diagnostics related to generic requirement
@@ -1505,6 +1510,9 @@ private:
   /// let's produce tailored diagnostics.
   bool diagnoseClosure(const ClosureExpr *closure);
 
+  /// Diagnose a single missing argument to a buildBlock call.
+  bool diagnoseMissingResultBuilderElement() const;
+
   /// Diagnose cases when instead of multiple distinct arguments
   /// call got a single tuple argument with expected arity/types.
   bool diagnoseInvalidTupleDestructuring() const;
@@ -1632,13 +1640,11 @@ private:
 /// ```
 class InaccessibleMemberFailure final : public FailureDiagnostic {
   ValueDecl *Member;
-  bool IsMissingImport;
 
 public:
   InaccessibleMemberFailure(const Solution &solution, ValueDecl *member,
-                            ConstraintLocator *locator, bool isMissingImport)
-      : FailureDiagnostic(solution, locator), Member(member),
-        IsMissingImport(isMissingImport) {}
+                            ConstraintLocator *locator)
+      : FailureDiagnostic(solution, locator), Member(member) {}
 
   bool diagnoseAsError() override;
 };
@@ -1745,20 +1751,25 @@ protected:
 };
 
 /// Diagnose an attempt to reference a static member as a key path component
-/// e.g.
+/// without .Type e.g.
 ///
 /// ```swift
 /// struct S {
 ///   static var foo: Int = 42
 /// }
 ///
-/// _ = \S.Type.foo
+/// _ = \S.foo
 /// ```
 class InvalidStaticMemberRefInKeyPath final : public InvalidMemberRefInKeyPath {
+  Type BaseType;
+
 public:
-  InvalidStaticMemberRefInKeyPath(const Solution &solution, ValueDecl *member,
-                                  ConstraintLocator *locator)
-      : InvalidMemberRefInKeyPath(solution, member, locator) {}
+  InvalidStaticMemberRefInKeyPath(const Solution &solution, Type baseType,
+                                  ValueDecl *member, ConstraintLocator *locator)
+      : InvalidMemberRefInKeyPath(solution, member, locator),
+        BaseType(baseType->getRValueType()) {}
+
+  Type getBaseType() const { return BaseType; }
 
   bool diagnoseAsError() override;
 };
@@ -2598,6 +2609,18 @@ public:
       : FailureDiagnostic(solution, locator), P(pattern) {}
 
   bool diagnoseAsError() override;
+
+private:
+  /// Diagnose situations where a type-casting pattern that binds a value
+  /// expects 'as' but is given 'as!', 'as?' or 'is' instead
+  /// e.g:
+  ///
+  /// \code
+  /// case let x as? Int = y
+  /// case let x as! Int = y
+  /// case let x is Int = y
+  /// \endcode
+  bool diagnoseInvalidCheckedCast() const;
 };
 
 /// Diagnose situations where there is no context to determine a
@@ -3133,13 +3156,15 @@ public:
   bool diagnoseAsError() override;
 };
 
-class GenericFunctionSpecialization final : public FailureDiagnostic {
+/// Diagnose attempts to specialize (generic) function references.
+class InvalidFunctionSpecialization final : public FailureDiagnostic {
   ValueDecl *Decl;
 
 public:
-  GenericFunctionSpecialization(const Solution &solution, ValueDecl *decl,
-                                ConstraintLocator *locator)
-      : FailureDiagnostic(solution, locator), Decl(decl) {}
+  InvalidFunctionSpecialization(const Solution &solution, ValueDecl *decl,
+                                ConstraintLocator *locator,
+                                FixBehavior fixBehavior)
+      : FailureDiagnostic(solution, locator, fixBehavior), Decl(decl) {}
 
   bool diagnoseAsError() override;
 };

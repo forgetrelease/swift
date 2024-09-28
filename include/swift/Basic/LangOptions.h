@@ -18,7 +18,6 @@
 #ifndef SWIFT_BASIC_LANGOPTIONS_H
 #define SWIFT_BASIC_LANGOPTIONS_H
 
-#include "swift/AST/DiagnosticsFrontend.h"
 #include "swift/Basic/CXXStdlibKind.h"
 #include "swift/Basic/Feature.h"
 #include "swift/Basic/FixedBitSet.h"
@@ -45,12 +44,13 @@
 
 namespace swift {
 
-  enum class DiagnosticBehavior : uint8_t;
+  struct DiagnosticBehavior;
+  class DiagnosticEngine;
 
   /// Kind of implicit platform conditions.
   enum class PlatformConditionKind {
-#define PLATFORM_CONDITION(LABEL, IDENTIFIER) LABEL,
-#include "swift/AST/PlatformConditionKinds.def"
+  #define PLATFORM_CONDITION(LABEL, IDENTIFIER) LABEL,
+  #include "swift/AST/PlatformConditionKinds.def"
   };
 
   /// Describes how strict concurrency checking should be.
@@ -217,8 +217,14 @@ namespace swift {
 
     /// Diagnostic level to report when a public declarations doesn't declare
     /// an introduction OS version.
-    std::optional<DiagnosticBehavior> RequireExplicitAvailability =
-        std::nullopt;
+    enum class RequireExplicitAvailabilityDiagnosticBehavior : uint8_t {
+      Ignore,
+      Warning,
+      Error,
+    };
+    RequireExplicitAvailabilityDiagnosticBehavior
+        RequireExplicitAvailabilityBehavior =
+            RequireExplicitAvailabilityDiagnosticBehavior::Ignore;
 
     /// Introduction platform and version to suggest as fix-it
     /// when using RequireExplicitAvailability.
@@ -457,10 +463,6 @@ namespace swift {
     /// but will not be used for checking type equality.
     /// [TODO: Clang-type-plumbing] Turn on for feature rollout.
     bool UseClangFunctionTypes = false;
-
-    /// If set to true, the diagnosis engine can assume the emitted diagnostics
-    /// will be used in editor. This usually leads to more aggressive fixit.
-    bool DiagnosticsEditorMode = false;
 
     /// Access or distribution level of the whole module being parsed.
     LibraryLevel LibraryLevel = LibraryLevel::Other;

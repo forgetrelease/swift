@@ -14,6 +14,7 @@
 
 #include "swift/AST/Decl.h"
 #include "swift/AST/ExistentialLayout.h"
+#include "swift/AST/GenericParamList.h"
 #include "swift/AST/NameLookup.h"
 #include "swift/AST/ParameterList.h"
 #include "swift/AST/Pattern.h"
@@ -49,16 +50,6 @@ static bool usesTypeMatching(Decl *decl, llvm::function_ref<bool(Type)> fn) {
 #define UNINTERESTING_FEATURE(FeatureName)                                     \
   static bool usesFeature##FeatureName(Decl *decl) { return false; }
 
-static bool usesFeatureSpecializeAttributeWithAvailability(Decl *decl) {
-  if (auto func = dyn_cast<AbstractFunctionDecl>(decl)) {
-    for (auto specialize : func->getAttrs().getAttributes<SpecializeAttr>()) {
-      if (!specialize->getAvailableAttrs().empty())
-        return true;
-    }
-  }
-  return false;
-}
-
 // ----------------------------------------------------------------------------
 // MARK: - Upcoming Features
 // ----------------------------------------------------------------------------
@@ -77,6 +68,7 @@ UNINTERESTING_FEATURE(FullTypedThrows)
 UNINTERESTING_FEATURE(ExistentialAny)
 UNINTERESTING_FEATURE(InferSendableFromCaptures)
 UNINTERESTING_FEATURE(ImplicitOpenExistentials)
+UNINTERESTING_FEATURE(MemberImportVisibility)
 
 // ----------------------------------------------------------------------------
 // MARK: - Experimental Features
@@ -129,12 +121,83 @@ UNINTERESTING_FEATURE(Embedded)
 UNINTERESTING_FEATURE(Volatile)
 UNINTERESTING_FEATURE(SuppressedAssociatedTypes)
 UNINTERESTING_FEATURE(StructLetDestructuring)
-UNINTERESTING_FEATURE(NonescapableTypes)
+
+static bool usesFeatureNonescapableTypes(Decl *decl) {
+  auto containsNonEscapable =
+      [](SmallVectorImpl<InverseRequirement> &inverseReqs) {
+        auto foundIt =
+            llvm::find_if(inverseReqs, [](InverseRequirement inverseReq) {
+              if (inverseReq.getKind() == InvertibleProtocolKind::Escapable) {
+                return true;
+              }
+              return false;
+            });
+        return foundIt != inverseReqs.end();
+      };
+
+  if (auto *valueDecl = dyn_cast<ValueDecl>(decl)) {
+    if (isa<StructDecl, EnumDecl, ClassDecl>(decl)) {
+      auto *nominalDecl = cast<NominalTypeDecl>(valueDecl);
+      InvertibleProtocolSet inverses;
+      bool anyObject = false;
+      getDirectlyInheritedNominalTypeDecls(nominalDecl, inverses, anyObject);
+      if (inverses.containsEscapable()) {
+        return true;
+      }
+    }
+
+    if (auto proto = dyn_cast<ProtocolDecl>(decl)) {
+      auto reqSig = proto->getRequirementSignature();
+
+      SmallVector<Requirement, 2> reqs;
+      SmallVector<InverseRequirement, 2> inverses;
+      reqSig.getRequirementsWithInverses(proto, reqs, inverses);
+      if (containsNonEscapable(inverses))
+        return true;
+    }
+
+    if (isa<AbstractFunctionDecl>(valueDecl) ||
+        isa<AbstractStorageDecl>(valueDecl)) {
+      if (valueDecl->getInterfaceType().findIf([&](Type type) -> bool {
+            if (auto *nominalDecl = type->getAnyNominal()) {
+              if (isa<StructDecl, EnumDecl, ClassDecl>(nominalDecl))
+                return usesFeatureNonescapableTypes(nominalDecl);
+            }
+            return false;
+          })) {
+        return true;
+      }
+    }
+  }
+
+  if (auto *ext = dyn_cast<ExtensionDecl>(decl)) {
+    if (auto *nominal = ext->getExtendedNominal())
+      if (usesFeatureNonescapableTypes(nominal))
+        return true;
+  }
+
+  if (auto *genCtx = decl->getAsGenericContext()) {
+    if (auto genericSig = genCtx->getGenericSignature()) {
+      SmallVector<Requirement, 2> reqs;
+      SmallVector<InverseRequirement, 2> inverseReqs;
+      genericSig->getRequirementsWithInverses(reqs, inverseReqs);
+      if (containsNonEscapable(inverseReqs)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 UNINTERESTING_FEATURE(StaticExclusiveOnly)
 UNINTERESTING_FEATURE(ExtractConstantsFromMembers)
 UNINTERESTING_FEATURE(FixedArrays)
 UNINTERESTING_FEATURE(GroupActorErrors)
 UNINTERESTING_FEATURE(SameElementRequirements)
+UNINTERESTING_FEATURE(UnspecifiedMeansMainActorIsolated)
+UNINTERESTING_FEATURE(GlobalActorInferenceCutoff)
+UNINTERESTING_FEATURE(KeyPathWithStaticMembers)
 
 static bool usesFeatureSendingArgsAndResults(Decl *decl) {
   auto isFunctionTypeWithSending = [](Type type) {
@@ -214,7 +277,6 @@ static bool usesFeatureIsolatedAny(Decl *decl) {
   });
 }
 
-UNINTERESTING_FEATURE(MemberImportVisibility)
 UNINTERESTING_FEATURE(IsolatedAny2)
 UNINTERESTING_FEATURE(GlobalActorIsolatedTypesUsability)
 UNINTERESTING_FEATURE(ObjCImplementation)
@@ -225,6 +287,29 @@ UNINTERESTING_FEATURE(DebugDescriptionMacro)
 UNINTERESTING_FEATURE(ReinitializeConsumeInMultiBlockDefer)
 UNINTERESTING_FEATURE(SE427NoInferenceOnExtension)
 UNINTERESTING_FEATURE(TrailingComma)
+
+static bool usesFeatureAllowUnsafeAttribute(Decl *decl) {
+  return decl->getAttrs().hasAttribute<UnsafeAttr>();
+}
+
+UNINTERESTING_FEATURE(WarnUnsafe)
+UNINTERESTING_FEATURE(SafeInterop)
+
+static bool usesFeatureValueGenerics(Decl *decl) {
+  auto genericContext = decl->getAsGenericContext();
+
+  if (!genericContext || !genericContext->getGenericParams())
+    return false;
+
+  for (auto param : genericContext->getGenericParams()->getParams()) {
+    if (param->isValue())
+      return true;
+
+    continue;
+  }
+
+  return false;
+}
 
 // ----------------------------------------------------------------------------
 // MARK: - FeatureSet

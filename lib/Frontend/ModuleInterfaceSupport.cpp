@@ -97,6 +97,10 @@ static void printToolVersionAndFlagsComment(raw_ostream &out,
           importedName == BUILTIN_NAME)
         continue;
 
+      // Aliasing Foundation confuses the typechecker (rdar://128897610).
+      if (importedName == "Foundation")
+        continue;
+
       if (AliasModuleNamesTargets.insert(importedName).second) {
         out << " -module-alias " << MODULE_DISAMBIGUATING_PREFIX <<
                importedName << "=" << importedName;
@@ -910,7 +914,7 @@ bool swift::emitSwiftInterface(raw_ostream &out,
       M, Opts.PreserveTypesAsWritten, Opts.PrintFullConvention,
       Opts.InterfaceContentMode,
       useExportedModuleNames,
-      Opts.AliasModuleNames, &aliasModuleNamesTargets);
+      Opts.AliasModuleNames, &aliasModuleNamesTargets, Opts.ABIComments);
   InheritedProtocolCollector::PerTypeMap inheritedProtocolMap;
 
   SmallVector<Decl *, 16> topLevelDecls;

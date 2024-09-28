@@ -30,15 +30,18 @@ static std::optional<Path> getActualModuleMapPath(
     StringRef name, SearchPathOptions &Opts, const llvm::Triple &triple,
     bool isArchSpecific,
     const llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> &vfs) {
-  StringRef platform = swift::getPlatformNameForTriple(triple);
+  StringRef platform;
+  if (swift::tripleIsMacCatalystEnvironment(triple))
+    platform = "macosx";
+  else
+    platform = swift::getPlatformNameForTriple(triple);
   StringRef arch = swift::getMajorArchitectureName(triple);
 
   Path result;
 
-  StringRef SDKPath = Opts.getSDKPath();
-  if (!SDKPath.empty()) {
-    result.append(SDKPath.begin(), SDKPath.end());
-    llvm::sys::path::append(result, "usr", "lib", "swift");
+  if (!Opts.RuntimeResourcePath.empty()) {
+    result.append(Opts.RuntimeResourcePath.begin(),
+                  Opts.RuntimeResourcePath.end());
     llvm::sys::path::append(result, platform);
     if (isArchSpecific) {
       llvm::sys::path::append(result, arch);
@@ -52,10 +55,11 @@ static std::optional<Path> getActualModuleMapPath(
       return result;
   }
 
-  if (!Opts.RuntimeResourcePath.empty()) {
+  StringRef SDKPath = Opts.getSDKPath();
+  if (!SDKPath.empty()) {
     result.clear();
-    result.append(Opts.RuntimeResourcePath.begin(),
-                  Opts.RuntimeResourcePath.end());
+    result.append(SDKPath.begin(), SDKPath.end());
+    llvm::sys::path::append(result, "usr", "lib", "swift");
     llvm::sys::path::append(result, platform);
     if (isArchSpecific) {
       llvm::sys::path::append(result, arch);

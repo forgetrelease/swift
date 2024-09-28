@@ -29,6 +29,7 @@
 #include "swift/AST/LazyResolver.h"
 #include "swift/AST/LinkLibrary.h"
 #include "swift/AST/MacroDefinition.h"
+#include "swift/AST/Module.h"
 #include "swift/AST/PackConformance.h"
 #include "swift/AST/ParameterList.h"
 #include "swift/AST/Pattern.h"
@@ -743,11 +744,7 @@ IdentifierID Serializer::addContainingModuleRef(const DeclContext *DC,
     return CURRENT_MODULE_ID;
   if (M == this->M->getASTContext().TheBuiltinModule)
     return BUILTIN_MODULE_ID;
-
-  auto clangImporter =
-    static_cast<ClangImporter *>(
-      this->M->getASTContext().getClangModuleLoader());
-  if (M == clangImporter->getImportedHeaderModule())
+  if (M->isClangHeaderImportModule())
     return OBJC_HEADER_MODULE_ID;
 
   auto exportedModuleName = file->getExportedModuleName();
@@ -846,19 +843,24 @@ void Serializer::writeBlockInfoBlock() {
   BLOCK_RECORD(options_block, XCC);
   BLOCK_RECORD(options_block, IS_SIB);
   BLOCK_RECORD(options_block, IS_STATIC_LIBRARY);
+  BLOCK_RECORD(options_block, HAS_HERMETIC_SEAL_AT_LINK);
+  BLOCK_RECORD(options_block, IS_EMBEDDED_SWIFT_MODULE);
   BLOCK_RECORD(options_block, IS_TESTABLE);
-  BLOCK_RECORD(options_block, ARE_PRIVATE_IMPORTS_ENABLED);
   BLOCK_RECORD(options_block, RESILIENCE_STRATEGY);
+  BLOCK_RECORD(options_block, ARE_PRIVATE_IMPORTS_ENABLED);
+  BLOCK_RECORD(options_block, IS_IMPLICIT_DYNAMIC_ENABLED);
+  BLOCK_RECORD(options_block, IS_BUILT_FROM_INTERFACE);
   BLOCK_RECORD(options_block, IS_ALLOW_MODULE_WITH_COMPILER_ERRORS_ENABLED);
   BLOCK_RECORD(options_block, MODULE_ABI_NAME);
   BLOCK_RECORD(options_block, IS_CONCURRENCY_CHECKED);
-  BLOCK_RECORD(options_block, HAS_CXX_INTEROPERABILITY_ENABLED);
-  BLOCK_RECORD(options_block, CXX_STDLIB_KIND);
   BLOCK_RECORD(options_block, MODULE_PACKAGE_NAME);
   BLOCK_RECORD(options_block, MODULE_EXPORT_AS_NAME);
   BLOCK_RECORD(options_block, PLUGIN_SEARCH_OPTION);
+  BLOCK_RECORD(options_block, HAS_CXX_INTEROPERABILITY_ENABLED);
   BLOCK_RECORD(options_block, ALLOW_NON_RESILIENT_ACCESS);
   BLOCK_RECORD(options_block, SERIALIZE_PACKAGE_ENABLED);
+  BLOCK_RECORD(options_block, CXX_STDLIB_KIND);
+  BLOCK_RECORD(options_block, PUBLIC_MODULE_NAME);
 
   BLOCK(INPUT_BLOCK);
   BLOCK_RECORD(input_block, IMPORTED_MODULE);
@@ -871,6 +873,7 @@ void Serializer::writeBlockInfoBlock() {
   BLOCK_RECORD(input_block, DEPENDENCY_DIRECTORY);
   BLOCK_RECORD(input_block, MODULE_INTERFACE_PATH);
   BLOCK_RECORD(input_block, IMPORTED_MODULE_SPIS);
+  BLOCK_RECORD(input_block, EXTERNAL_MACRO);
 
   BLOCK(DECLS_AND_TYPES_BLOCK);
 #define RECORD(X) BLOCK_RECORD(decls_block, X);
@@ -1126,6 +1129,13 @@ void Serializer::writeHeader() {
         ExportAs.emit(ScratchRecord, M->getExportAsName().str());
       }
 
+      Identifier publicModuleName =
+        M->getPublicModuleName(/*onlyIfImported=*/false);
+      if (publicModuleName != M->getName()) {
+        options_block::PublicModuleNameLayout PublicModuleName(Out);
+        PublicModuleName.emit(ScratchRecord, publicModuleName.str());
+      }
+
       if (M->isConcurrencyChecked()) {
         options_block::IsConcurrencyCheckedLayout IsConcurrencyChecked(Out);
         IsConcurrencyChecked.emit(ScratchRecord);
@@ -1270,6 +1280,7 @@ void Serializer::writeInputBlock() {
   input_block::FileDependencyLayout FileDependency(Out);
   input_block::DependencyDirectoryLayout DependencyDirectory(Out);
   input_block::ModuleInterfaceLayout ModuleInterface(Out);
+  input_block::ExternalMacroLayout ExternMacro(Out);
 
   if (Options.SerializeOptionsForDebugging) {
     const auto &PathObfuscator = Options.PathObfuscator;
@@ -1307,6 +1318,42 @@ void Serializer::writeInputBlock() {
 
   if (!Options.ModuleInterface.empty())
     ModuleInterface.emit(ScratchRecord, Options.ModuleInterface);
+
+  SmallVector<ExternalMacroPlugin> macros;
+  M->getExternalMacros(macros);
+
+  // Unique the macro modules discovered and pick the most public access.
+  std::map<std::string, ExternalMacroPlugin::Access> uniqueMacros;
+  for (auto &plugin : macros) {
+    // Ignore internal macros when serializing since they are not visibile for
+    // clients.
+    if (plugin.MacroAccess <= ExternalMacroPlugin::Access::Internal)
+      continue;
+
+    auto entry =
+        uniqueMacros.try_emplace(plugin.ModuleName, plugin.MacroAccess);
+    if (entry.second)
+      continue;
+
+    if (plugin.MacroAccess > entry.first->second)
+      entry.first->second = plugin.MacroAccess;
+  }
+  for (auto &plugin : uniqueMacros) {
+    // Use the AccessLevel enums to encode the macro access but only some
+    // values are used for macro access.
+    serialization::AccessLevel stableAccessControl;
+    if (plugin.second == ExternalMacroPlugin::Access::Public)
+      stableAccessControl = serialization::AccessLevel::Public;
+    else if (plugin.second == ExternalMacroPlugin::Access::Package)
+      stableAccessControl = serialization::AccessLevel::Package;
+    else if (plugin.second == ExternalMacroPlugin::Access::Internal)
+      stableAccessControl = serialization::AccessLevel::Internal;
+    else
+      llvm_unreachable("unknown enum value");
+
+    ExternMacro.emit(ScratchRecord, static_cast<uint8_t>(stableAccessControl),
+                     plugin.first);
+  }
 
   SmallVector<ImportedModule, 8> allLocalImports;
   M->getImportedModules(allLocalImports, ModuleDecl::getImportFilterLocal());
@@ -1503,6 +1550,21 @@ static uint8_t getRawStableRequirementKind(RequirementKind kind) {
   llvm_unreachable("Unhandled RequirementKind in switch.");
 }
 
+static uint8_t getRawStableGenericParamKind(GenericTypeParamKind kind) {
+#define CASE(KIND)            \
+  case GenericTypeParamKind::KIND: \
+    return (uint8_t)serialization::GenericParamKind::KIND;
+
+  switch (kind) {
+  CASE(Type)
+  CASE(Pack)
+  CASE(Value)
+  }
+#undef CASE
+
+  llvm_unreachable("Unhandled RequirementKind in switch.");
+}
+
 void Serializer::serializeGenericRequirements(
                                         ArrayRef<Requirement> requirements,
                                         SmallVectorImpl<uint64_t> &scratch) {
@@ -1642,10 +1704,8 @@ void Serializer::writeASTBlockEntity(GenericSignature sig) {
   } else {
     // Record the generic parameters.
     for (auto *paramTy : sig.getGenericParams()) {
-      auto *decl = paramTy->getDecl();
-
       // For a full environment, add the name and canonicalize the param type.
-      Identifier paramName = decl ? decl->getName() : Identifier();
+      Identifier paramName = paramTy->isCanonical() ? Identifier() : paramTy->getName();
       rawParamIDs.push_back(addDeclBaseNameRef(paramName));
 
       paramTy = paramTy->getCanonicalType()->castTo<GenericTypeParamType>();
@@ -1667,10 +1727,9 @@ void Serializer::writeASTBlockEntity(const GenericEnvironment *genericEnv) {
   case GenericEnvironment::Kind::OpenedExistential: {
     auto kind = GenericEnvironmentKind::OpenedExistential;
     auto existentialTypeID = addTypeRef(genericEnv->getOpenedExistentialType());
-    auto parentSig = genericEnv->getOpenedExistentialParentSignature();
-    auto parentSigID = addGenericSignatureRef(parentSig);
-    auto emptySubs = SubstitutionMap();
-    auto subsID = addSubstitutionMapRef(emptySubs);
+    auto parentSigID = addGenericSignatureRef(genericEnv->getGenericSignature());
+    auto contextSubs = genericEnv->getOuterSubstitutions();
+    auto subsID = addSubstitutionMapRef(contextSubs);
 
     auto genericEnvAbbrCode = DeclTypeAbbrCodes[GenericEnvironmentLayout::Code];
     GenericEnvironmentLayout::emitRecord(Out, ScratchRecord, genericEnvAbbrCode,
@@ -1682,9 +1741,8 @@ void Serializer::writeASTBlockEntity(const GenericEnvironment *genericEnv) {
   case GenericEnvironment::Kind::OpenedElement: {
     auto kind = GenericEnvironmentKind::OpenedElement;
     auto shapeClassID = addTypeRef(genericEnv->getOpenedElementShapeClass());
-    auto parentSig = genericEnv->getGenericSignature();
-    auto parentSigID = addGenericSignatureRef(parentSig);
-    auto contextSubs = genericEnv->getPackElementContextSubstitutions();
+    auto parentSigID = addGenericSignatureRef(genericEnv->getGenericSignature());
+    auto contextSubs = genericEnv->getOuterSubstitutions();
     auto subsID = addSubstitutionMapRef(contextSubs);
 
     auto genericEnvAbbrCode = DeclTypeAbbrCodes[GenericEnvironmentLayout::Code];
@@ -1801,9 +1859,9 @@ void Serializer::writeLocalNormalProtocolConformance(
       // Map archetypes to type parameters, since we always substitute them
       // away. Note that in a merge-modules pass, we're serializing conformances
       // that we deserialized, so they will already have their replacement types
-      // in terms of interface types; hence the hasArchetypes() check is
+      // in terms of interface types; hence the hasPrimaryArchetype() check is
       // necessary for correctness, not just as a fast path.
-      if (subs.hasArchetypes())
+      if (subs.getRecursiveProperties().hasPrimaryArchetype())
         subs = subs.mapReplacementTypesOutOfContext();
 
       data.push_back(addSubstitutionMapRef(subs));
@@ -2009,7 +2067,6 @@ static bool shouldSerializeMember(Decl *D) {
   case DeclKind::BuiltinTuple:
     llvm_unreachable("BuiltinTupleDecl should not show up here");
 
-  case DeclKind::IfConfig:
   case DeclKind::PoundDiagnostic:
     return false;
 
@@ -3336,30 +3393,38 @@ class Serializer::DeclSerializer : public DeclVisitor<DeclSerializer> {
       uint32_t rawSize;
       uint8_t rawAlign;
       TypeID typeID;
+      TypeID countID;
       
       auto SD = const_cast<StructDecl*>(cast<StructDecl>(D));
       
       if (auto sizeAndAlign = attr->getSizeAndAlignment()) {
         typeID = 0;
+        countID = 0;
         rawSize = sizeAndAlign->first;
         rawAlign = sizeAndAlign->second;
       } else if (auto likeType
                    = attr->getResolvedScalarLikeType(SD)) {
         typeID = S.addTypeRef(*likeType);
+        countID = 0;
         rawSize = 0;
         rawAlign = 0;
       } else if (auto likeArrayTypeAndCount
                    = attr->getResolvedArrayLikeTypeAndCount(SD)) {
         typeID = S.addTypeRef(likeArrayTypeAndCount->first);
-        rawSize = likeArrayTypeAndCount->second;
-        rawAlign = static_cast<uint8_t>(~0u);
+        countID = S.addTypeRef(likeArrayTypeAndCount->second);
+        rawSize = 0;
+        rawAlign = 0;
       } else {
         llvm_unreachable("unhandled raw layout attribute, or trying to serialize unresolved attr!");
       }
       
       RawLayoutDeclAttrLayout::emitRecord(
         S.Out, S.ScratchRecord, abbrCode, attr->isImplicit(),
-        typeID, rawSize, rawAlign, attr->shouldMoveAsLikeType());
+        typeID, countID, rawSize, rawAlign, attr->shouldMoveAsLikeType());
+      return;
+    }
+    case DeclAttrKind::Lifetime: {
+      return;
     }
     }
   }
@@ -4182,9 +4247,9 @@ public:
     GenericTypeParamDeclLayout::emitRecord(
         S.Out, S.ScratchRecord, abbrCode,
         S.addDeclBaseNameRef(genericParam->getName()),
-        genericParam->isImplicit(), genericParam->isParameterPack(),
-        genericParam->getDepth(), genericParam->getIndex(),
-        genericParam->isOpaqueType());
+        genericParam->isImplicit(),
+        genericParam->isOpaqueType(),
+        S.addTypeRef(genericParam->getDeclaredInterfaceType()->getCanonicalType()));
   }
 
   void visitAssociatedTypeDecl(const AssociatedTypeDecl *assocType) {
@@ -5035,10 +5100,6 @@ public:
     llvm_unreachable("import decls should not be serialized");
   }
 
-  void visitIfConfigDecl(const IfConfigDecl *) {
-    llvm_unreachable("#if block declarations should not be serialized");
-  }
-
   void visitPoundDiagnosticDecl(const PoundDiagnosticDecl *) {
     llvm_unreachable("#warning/#error declarations should not be serialized");
   }
@@ -5553,20 +5614,31 @@ public:
     using namespace decls_block;
 
     unsigned abbrCode = S.DeclTypeAbbrCodes[GenericTypeParamTypeLayout::Code];
-    DeclID declIDOrDepth;
-    unsigned indexPlusOne;
+    DeclID declOrIdentifier = 0;
+    bool hasDecl = false;
+    uint8_t paramKind = getRawStableGenericParamKind(genericParam->getParamKind());
+    TypeID valueTypeID = 0;
+
     if (genericParam->getDecl() &&
         !(genericParam->getDecl()->getDeclContext()->isModuleScopeContext() &&
           S.isDeclXRef(genericParam->getDecl()))) {
-      declIDOrDepth = S.addDeclRef(genericParam->getDecl());
-      indexPlusOne = 0;
-    } else {
-      declIDOrDepth = genericParam->getDepth();
-      indexPlusOne = genericParam->getIndex() + 1;
+      declOrIdentifier = S.addDeclRef(genericParam->getDecl());
+      hasDecl = true;
+    } else if (!genericParam->isCanonical()) {
+      declOrIdentifier = S.addDeclBaseNameRef(genericParam->getName());
     }
+
+    if (auto valueType = genericParam->getValueType()) {
+      valueTypeID = S.addTypeRef(valueType);
+    }
+
     GenericTypeParamTypeLayout::emitRecord(S.Out, S.ScratchRecord, abbrCode,
-                                           genericParam->isParameterPack(),
-                                           declIDOrDepth, indexPlusOne);
+                                           paramKind,
+                                           hasDecl,
+                                           genericParam->getDepth(),
+                                           genericParam->getIndex(),
+                                           declOrIdentifier,
+                                           valueTypeID);
   }
 
   void visitDependentMemberType(const DependentMemberType *dependent) {
@@ -5869,6 +5941,15 @@ public:
                                        S.addTypeRef(generic->getParent()),
                                        genericArgIDs);
   }
+
+  void visitIntegerType(const IntegerType *integer) {
+    using namespace decls_block;
+
+    unsigned abbrCode = S.DeclTypeAbbrCodes[IntegerTypeLayout::Code];
+    IntegerTypeLayout::emitRecord(S.Out, S.ScratchRecord, abbrCode,
+                                  integer->isNegative(),
+                                  integer->getDigitsText());
+  }
 };
 
 void Serializer::writeASTBlockEntity(Type ty) {
@@ -6054,6 +6135,7 @@ void Serializer::writeAllDeclsAndTypes() {
   registerDeclTypeAbbr<PackElementTypeLayout>();
   registerDeclTypeAbbr<PackTypeLayout>();
   registerDeclTypeAbbr<SILPackTypeLayout>();
+  registerDeclTypeAbbr<IntegerTypeLayout>();
 
   registerDeclTypeAbbr<ErrorFlagLayout>();
   registerDeclTypeAbbr<ErrorTypeLayout>();
@@ -6666,9 +6748,8 @@ void Serializer::writeAST(ModuleOrSourceFile DC) {
     nextFile->getTopLevelDeclsWithAuxiliaryDecls(fileDecls);
 
     for (auto D : fileDecls) {
-      if (isa<ImportDecl>(D) || isa<IfConfigDecl>(D) ||
-          isa<PoundDiagnosticDecl>(D) || isa<TopLevelCodeDecl>(D) ||
-          isa<MacroExpansionDecl>(D)) {
+      if (isa<ImportDecl>(D) || isa<MacroExpansionDecl>(D) ||
+          isa<PoundDiagnosticDecl>(D) || isa<TopLevelCodeDecl>(D)) {
         continue;
       }
 

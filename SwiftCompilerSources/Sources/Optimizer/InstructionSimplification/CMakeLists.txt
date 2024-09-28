@@ -7,6 +7,7 @@
 # See http://swift.org/CONTRIBUTORS.txt for Swift project authors
 
 swift_compiler_sources(Optimizer
+  SimplifyAllocRefDynamic.swift
   SimplifyApply.swift
   SimplifyBeginBorrow.swift
   SimplifyBeginCOWMutation.swift
@@ -24,6 +25,7 @@ swift_compiler_sources(Optimizer
   SimplifyInitEnumDataAddr.swift
   SimplifyKeyPath.swift
   SimplifyLoad.swift
+  SimplifyMisc.swift
   SimplifyPartialApply.swift
   SimplifyPointerToAddress.swift
   SimplifyRefCasts.swift

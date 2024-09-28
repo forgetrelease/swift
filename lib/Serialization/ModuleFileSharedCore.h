@@ -100,6 +100,9 @@ class ModuleFileSharedCore {
   /// Module name to use when referenced in clients module interfaces.
   StringRef ModuleExportAsName;
 
+  /// Name to use in public facing diagnostics and documentation.
+  StringRef PublicModuleName;
+
   /// \c true if this module has incremental dependency information.
   bool HasIncrementalInfo = false;
 
@@ -180,6 +183,9 @@ private:
   /// This is not intended for use by frameworks, but may show up in debug
   /// modules.
   std::vector<serialization::SearchPath> SearchPaths;
+
+  /// The external macro plugins from the macro definition inside the module.
+  SmallVector<ExternalMacroPlugin, 4> MacroModuleNames;
 
   /// Info for the (lone) imported header for this module.
   struct {
@@ -629,6 +635,11 @@ public:
 
   llvm::VersionTuple getUserModuleVersion() const {
     return UserModuleVersion;
+  }
+
+  /// Get external macro names.
+  ArrayRef<ExternalMacroPlugin> getExternalMacros() const {
+    return MacroModuleNames;
   }
 
   /// If the module-defining `.swiftinterface` file is an SDK-relative path,

@@ -91,9 +91,6 @@ protected:
   /// a critical role.
   bool AllowTypedThrows = true;
 
-  /// If enabled, lifetime dependencies can be encoded in the mangled name.
-  bool AllowLifetimeDependencies = true;
-
   /// If enabled, declarations annotated with @_originallyDefinedIn are mangled
   /// as if they're part of their original module. Disabled for debug mangling,
   /// because lldb wants to find declarations in the modules they're currently
@@ -220,9 +217,6 @@ public:
                                    bool isStatic,
                                    SymbolKind SKind);
 
-  std::string mangleGlobalGetterEntity(const ValueDecl *decl,
-                                       SymbolKind SKind = SymbolKind::Default);
-
   std::string mangleDefaultArgumentEntity(const DeclContext *func,
                                           unsigned index,
                                           SymbolKind SKind = SymbolKind::Default);
@@ -242,7 +236,7 @@ public:
                                            const ConstructorDecl *Derived,
                                            bool isAllocating);
 
-  std::string mangleWitnessTable(const RootProtocolConformance *C);
+  std::string mangleWitnessTable(const ProtocolConformance *C);
 
   std::string mangleWitnessThunk(const ProtocolConformance *Conformance,
                                  const ValueDecl *Requirement);
@@ -680,7 +674,7 @@ protected:
   
   void appendClosureEntity(const AbstractClosureExpr *closure);
 
-  void appendClosureComponents(Type Ty, unsigned discriminator, bool isImplicit,
+  void appendClosureComponents(CanType Ty, unsigned discriminator, bool isImplicit,
                                const DeclContext *parentContext,
                                ArrayRef<GenericEnvironment *> capturedEnvs);
 

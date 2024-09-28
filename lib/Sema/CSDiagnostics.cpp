@@ -95,7 +95,7 @@ Type FailureDiagnostic::getRawType(ASTNode node) const {
 
 Type FailureDiagnostic::resolveType(Type rawType, bool reconstituteSugar,
                                     bool wantRValue) const {
-  rawType = rawType.transform([&](Type type) -> Type {
+  rawType = rawType.transformRec([&](Type type) -> std::optional<Type> {
     if (auto *typeVar = type->getAs<TypeVariableType>()) {
       auto resolvedType = S.simplifyType(typeVar);
 
@@ -126,8 +126,10 @@ Type FailureDiagnostic::resolveType(Type rawType, bool reconstituteSugar,
       return env->mapElementTypeIntoPackContext(type);
     }
 
-    return type->isPlaceholder() ? Type(type->getASTContext().TheUnresolvedType)
-                                 : type;
+    if (type->isPlaceholder())
+      return Type(type->getASTContext().TheUnresolvedType);
+
+    return std::nullopt;
   });
 
   if (reconstituteSugar)
@@ -175,6 +177,21 @@ FailureDiagnostic::getArgumentListFor(ConstraintLocator *locator) const {
   return S.getArgumentList(locator);
 }
 
+StringRef FailureDiagnostic::getEditorPlaceholder(
+    StringRef description, Type ty,
+    llvm::SmallVectorImpl<char> &scratch) const {
+  llvm::raw_svector_ostream OS(scratch);
+  OS << "<#";
+  if (!ty || ty->is<UnresolvedType>()) {
+    OS << description;
+  } else {
+    OS << "T##";
+    ty.print(OS);
+  }
+  OS << "#>";
+  return StringRef(scratch.data(), scratch.size());
+}
+
 Expr *FailureDiagnostic::getBaseExprFor(const Expr *anchor) const {
   if (!anchor)
     return nullptr;
@@ -199,7 +216,7 @@ Type FailureDiagnostic::restoreGenericParameters(
     Type type,
     llvm::function_ref<void(GenericTypeParamType *, Type)> substitution) {
   llvm::SmallPtrSet<GenericTypeParamType *, 4> processed;
-  return type.transform([&](Type type) -> Type {
+  return type.transformRec([&](Type type) -> std::optional<Type> {
     if (auto *typeVar = type->getAs<TypeVariableType>()) {
       type = resolveType(typeVar);
       if (auto *GP = typeVar->getImpl().getGenericParameter()) {
@@ -209,7 +226,7 @@ Type FailureDiagnostic::restoreGenericParameters(
       }
     }
 
-    return type;
+    return std::nullopt;
   });
 }
 
@@ -225,8 +242,17 @@ Type RequirementFailure::getOwnerType() const {
   // to convert source to destination, which means that
   // owner type is actually not an assignment expression
   // itself but its source.
-  if (auto *assignment = getAsExpr<AssignExpr>(anchor))
+  if (auto *assignment = getAsExpr<AssignExpr>(anchor)) {
     anchor = assignment->getSrc();
+    // If locator points to a tuple element, let's dig that up.
+    // Situations like `<<dest>> = (v, 2)` where `v` has a requirement failure.
+    if (auto tupleEltIdx =
+            getLocator()->findFirst<LocatorPathElt::AnyTupleElement>()) {
+      if (auto *tuple = getAsExpr<TupleExpr>(anchor)) {
+        return getType(tuple->getElement(tupleEltIdx->getIndex()));
+      }
+    }
+  }
 
   return getType(anchor)->getInOutObjectType()->getMetatypeInstanceType();
 }
@@ -548,9 +574,8 @@ void RequirementFailure::maybeEmitRequirementNote(const Decl *anchor, Type lhs,
 
     // Handle 'some X' where the '& InvertibleProtocol' is implicit
     if (auto substTy = req.getFirstType()->getAs<GenericTypeParamType>())
-      if (auto gtpd = substTy->getDecl())
-        if (gtpd->isOpaqueType())
-          diag = diag::noncopyable_generics_implicit_composition;
+      if (substTy->getOpaqueDecl() != nullptr)
+        diag = diag::noncopyable_generics_implicit_composition;
 
     emitDiagnosticAt(anchor, diag, req.getFirstType(), req.getSecondType());
     return;
@@ -1647,7 +1672,7 @@ class VarDeclMultipleReferencesChecker : public ASTWalker {
     }
 
     // FIXME: We can see UnresolvedDeclRefExprs here because we have
-    // not yet run preCheckExpression() on the entire function body
+    // not yet run preCheckTarget() on the entire function body
     // yet.
     //
     // We could consider pre-checking more eagerly.
@@ -4968,10 +4993,10 @@ bool AllowTypeOrInstanceMemberFailure::diagnoseAsError() {
     }
 
     // If this is a reference to a static member by one of the key path
-    // components, let's provide a tailored diagnostic and return because
-    // that is unsupported so there is no fix-it.
+    // components, let's provide a tailored diagnostic with fix-it.
     if (locator->isInKeyPathComponent()) {
-      InvalidStaticMemberRefInKeyPath failure(getSolution(), Member, locator);
+      InvalidStaticMemberRefInKeyPath failure(getSolution(), BaseType, Member,
+                                              locator);
       return failure.diagnoseAsError();
     }
 
@@ -5175,6 +5200,9 @@ bool MissingArgumentsFailure::diagnoseAsError() {
     // TODO: It would be great so somehow point out which arguments are missing.
     return true;
   }
+
+  if (diagnoseMissingResultBuilderElement())
+    return true;
 
   if (diagnoseInvalidTupleDestructuring())
     return true;
@@ -5510,6 +5538,55 @@ bool MissingArgumentsFailure::diagnoseClosure(const ClosureExpr *closure) {
     diag.fixItInsertAfter(params->getEndLoc(), OS.str());
   }
 
+  return true;
+}
+
+bool MissingArgumentsFailure::diagnoseMissingResultBuilderElement() const {
+  auto &ctx = getASTContext();
+
+  // Only handle a single missing argument in an empty builder for now. This
+  // should be the most common case though since most builders support N >= 1
+  // elements.
+  if (SynthesizedArgs.size() != 1)
+    return false;
+
+  auto *call = getAsExpr<CallExpr>(getRawAnchor());
+  if (!call || !call->isImplicit() || !call->getArgs()->empty())
+    return false;
+
+  auto *UDE = dyn_cast<UnresolvedDotExpr>(call->getFn());
+  if (!UDE || !isResultBuilderMethodReference(ctx, UDE))
+    return false;
+
+  auto overload = getCalleeOverloadChoiceIfAvailable(getLocator());
+  if (!overload)
+    return false;
+
+  auto *decl = overload->choice.getDeclOrNull();
+  if (!decl || decl->getBaseName() != ctx.Id_buildBlock)
+    return false;
+
+  auto resultBuilder =
+      getType(UDE->getBase())->getMetatypeInstanceType()->getAnyNominal();
+  if (!resultBuilder)
+    return false;
+
+  auto paramType = resolveType(SynthesizedArgs.front().param.getPlainType());
+
+  SmallString<64> scratch;
+  auto fixIt = getEditorPlaceholder("result", paramType, scratch);
+  auto fixItLoc = call->getStartLoc();
+
+  if (paramType->is<UnresolvedType>()) {
+    emitDiagnostic(diag::result_builder_missing_element,
+                   resultBuilder->getName())
+        .fixItInsertAfter(fixItLoc, fixIt);
+  } else {
+    emitDiagnostic(diag::result_builder_missing_element_of_type, paramType,
+                   resultBuilder->getName())
+        .fixItInsertAfter(fixItLoc, fixIt);
+  }
+  emitDiagnosticAt(decl, diag::decl_declared_here, decl);
   return true;
 }
 
@@ -6182,11 +6259,6 @@ bool InaccessibleMemberFailure::diagnoseAsError() {
   }
 
   auto loc = nameLoc.isValid() ? nameLoc.getStartLoc() : ::getLoc(anchor);
-  if (IsMissingImport) {
-    maybeDiagnoseMissingImportForMember(Member, getDC(), loc);
-    return true;
-  }
-
   auto accessLevel = Member->getFormalAccessScope().accessLevelForDiagnostics();
   if (auto *CD = dyn_cast<ConstructorDecl>(Member)) {
     emitDiagnosticAt(loc, diag::init_candidate_inaccessible,
@@ -6263,8 +6335,25 @@ SourceLoc InvalidMemberRefInKeyPath::getLoc() const {
 }
 
 bool InvalidStaticMemberRefInKeyPath::diagnoseAsError() {
-  emitDiagnostic(diag::expr_keypath_static_member, getMember(),
-                 isForKeyPathDynamicMemberLookup());
+  auto *KPE = getAsExpr<KeyPathExpr>(getRawAnchor());
+  auto rootTyRepr = KPE->getExplicitRootType();
+  auto isProtocol = getBaseType()->isExistentialType();
+
+  if (!getConstraintSystem().getASTContext().LangOpts.hasFeature(
+          Feature::KeyPathWithStaticMembers)) {
+    emitDiagnostic(diag::expr_keypath_static_member, getMember(),
+                   isForKeyPathDynamicMemberLookup());
+  } else {
+    if (rootTyRepr && !isProtocol) {
+      emitDiagnostic(diag::could_not_use_type_member_on_instance, getBaseType(),
+                     DeclNameRef(getMember()->getName()))
+          .fixItInsert(rootTyRepr->getEndLoc(), ".Type");
+    } else {
+      emitDiagnostic(diag::could_not_use_type_member_on_instance, getBaseType(),
+                     DeclNameRef(getMember()->getName()));
+    }
+  }
+
   return true;
 }
 
@@ -6666,7 +6755,7 @@ void MissingGenericArgumentsFailure::emitGenericSignatureNote(
                : nullptr;
   };
 
-  llvm::SmallDenseMap<GenericTypeParamDecl *, Type> params;
+  llvm::SmallDenseMap<GenericTypeParamType *, Type> params;
   for (auto &entry : solution.typeBindings) {
     auto *typeVar = entry.first;
 
@@ -6685,10 +6774,10 @@ void MissingGenericArgumentsFailure::emitGenericSignatureNote(
                      }))
       continue;
 
-    params[GP->getDecl()] = type;
+    params[GP] = type;
   }
 
-  auto getPreferredType = [&](const GenericTypeParamDecl *GP) -> Type {
+  auto getPreferredType = [&](const GenericTypeParamType *GP) -> Type {
     auto type = params.find(GP);
     return (type == params.end()) ? Type() : type->second;
   };
@@ -8627,8 +8716,45 @@ bool InvalidPatternInExprFailure::diagnoseAsError() {
       E = parent;
     }
   }
-  emitDiagnostic(diag::pattern_in_expr, P->getDescriptiveKind());
+  if (!diagnoseInvalidCheckedCast()) {
+    emitDiagnostic(diag::pattern_in_expr, P->getDescriptiveKind());
+  }
   return true;
+}
+
+bool InvalidPatternInExprFailure::diagnoseInvalidCheckedCast() const {
+  auto *E = findParentExpr(castToExpr(getAnchor()));
+  // Make sure we have a CheckedCastExpr and are in an argument of `~=`.
+  while (E && !isa<CheckedCastExpr>(E))
+    E = findParentExpr(E);
+  auto *castExpr = cast_or_null<CheckedCastExpr>(E);
+  if (!castExpr)
+    return false;
+  auto *parent = findParentExpr(castExpr);
+  while (parent && !isa<BinaryExpr>(parent))
+    parent = findParentExpr(parent);
+  auto *BE = cast_or_null<BinaryExpr>(parent);
+  if (!BE || !isPatternMatchingOperator(BE->getFn()))
+    return false;
+  // Emit the appropriate diagnostic based on the cast kind.
+  if (auto *forced = dyn_cast<ForcedCheckedCastExpr>(castExpr)) {
+    emitDiagnosticAt(castExpr->getLoc(),
+                     diag::force_cast_in_type_casting_pattern)
+        .fixItRemove(forced->getExclaimLoc());
+    return true;
+  }
+  if (auto *conditional = dyn_cast<ConditionalCheckedCastExpr>(castExpr)) {
+    emitDiagnosticAt(castExpr->getLoc(),
+                     diag::conditional_cast_in_type_casting_pattern)
+        .fixItRemove(conditional->getQuestionLoc());
+    return true;
+  }
+  if (auto *isExpr = dyn_cast<IsExpr>(castExpr)) {
+    emitDiagnosticAt(castExpr->getLoc(), diag::cannot_bind_value_with_is)
+        .fixItReplace(isExpr->getAsLoc(), "as");
+    return true;
+  }
+  return false;
 }
 
 bool MissingContextualTypeForNil::diagnoseAsError() {
@@ -9363,8 +9489,8 @@ bool ConcreteTypeSpecialization::diagnoseAsError() {
   return true;
 }
 
-bool GenericFunctionSpecialization::diagnoseAsError() {
-  emitDiagnostic(diag::cannot_explicitly_specialize_generic_function);
+bool InvalidFunctionSpecialization::diagnoseAsError() {
+  emitDiagnostic(diag::cannot_explicitly_specialize_function, Decl);
   emitDiagnosticAt(Decl, diag::decl_declared_here, Decl);
   return true;
 }

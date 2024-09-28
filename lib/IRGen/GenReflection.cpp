@@ -245,6 +245,12 @@ getRuntimeVersionThatSupportsDemanglingType(CanType type) {
       }
     }
 
+    // Any composition with an inverse will need the 6.0 runtime to demangle.
+    if (auto pct = dyn_cast<ProtocolCompositionType>(t)) {
+      if (pct->hasInverse())
+        return addRequirement(Swift_6_0);
+    }
+
     return false;
   });
 
@@ -1138,7 +1144,7 @@ public:
 
     auto alignment = ti->getFixedAlignment().getValue();
     unsigned bitwiseTakable =
-      (ti->isBitwiseTakable(ResilienceExpansion::Minimal) == IsBitwiseTakable
+      (ti->getBitwiseTakable(ResilienceExpansion::Minimal) >= IsBitwiseTakableOnly
        ? 1 : 0);
     B.addInt32(alignment | (bitwiseTakable << 16));
 
@@ -1287,7 +1293,8 @@ public:
   struct Entry {
     enum Kind {
       Metadata,
-      Shape
+      Shape,
+      Value
     };
 
     Kind kind;
@@ -1308,6 +1315,9 @@ public:
       SmallString<16> EncodeBuffer;
       llvm::raw_svector_ostream OS(EncodeBuffer);
       switch (Kind) {
+      case Entry::Kind::Value:
+        OS << "v";
+        break;
       case Entry::Kind::Shape:
         OS << "s";
         break;
@@ -1384,10 +1394,18 @@ public:
       switch (Bindings[i].getKind()) {
       case GenericRequirement::Kind::Shape:
       case GenericRequirement::Kind::Metadata:
-      case GenericRequirement::Kind::MetadataPack: {
-        auto Kind = (Bindings[i].getKind() == GenericRequirement::Kind::Shape
-                     ? Entry::Kind::Shape
-                     : Entry::Kind::Metadata);
+      case GenericRequirement::Kind::MetadataPack:
+      case GenericRequirement::Kind::Value: {
+        auto Kind = Entry::Kind::Metadata;
+
+        if (Bindings[i].getKind() == GenericRequirement::Kind::Shape) {
+          Kind = Entry::Kind::Shape;
+        }
+
+        if (Bindings[i].getKind() == GenericRequirement::Kind::Value) {
+          Kind = Entry::Kind::Value;
+        }
+
         auto Source = SourceBuilder.createClosureBinding(i);
         auto BindingType = Bindings[i].getTypeParameter().subst(Subs);
         auto InterfaceType = BindingType->mapTypeOutOfContext();
@@ -1444,6 +1462,10 @@ public:
         Kind = Entry::Kind::Metadata;
         break;
 
+      case GenericRequirement::Kind::Value:
+        Kind = Entry::Kind::Value;
+        break;
+
       case GenericRequirement::Kind::WitnessTable:
       case GenericRequirement::Kind::WitnessTablePack:
         llvm_unreachable("Bad kind");
@@ -1473,12 +1495,12 @@ public:
 
       // Erase pseudogeneric captures down to AnyObject.
       if (OrigCalleeType->isPseudogeneric()) {
-        SwiftType = SwiftType.transform([&](Type t) -> Type {
+        SwiftType = SwiftType.transformRec([&](Type t) -> std::optional<Type> {
           if (auto *archetype = t->getAs<ArchetypeType>()) {
             assert(archetype->requiresClass() && "don't know what to do");
             return IGM.Context.getAnyObjectType();
           }
-          return t;
+          return std::nullopt;
         })->getCanonicalType();
       }
       

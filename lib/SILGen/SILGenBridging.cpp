@@ -747,8 +747,7 @@ static ManagedValue emitNativeToCBridgedNonoptionalValue(SILGenFunction &SGF,
   // If the input argument is known to be an existential, save the runtime
   // some work by opening it.
   if (nativeType->isExistentialType()) {
-    auto openedType = OpenedArchetypeType::get(nativeType,
-                                               SGF.F.getGenericSignature());
+    auto openedType = OpenedArchetypeType::get(nativeType);
 
     FormalEvaluationScope scope(SGF);
 
@@ -1316,8 +1315,9 @@ static SILValue emitObjCUnconsumedArgument(SILGenFunction &SGF,
                                            SILLocation loc,
                                            SILValue arg) {
   auto &lowering = SGF.getTypeLowering(arg->getType());
-  // If address-only, make a +1 copy and operate on that.
-  if (lowering.isAddressOnly() && SGF.useLoweredAddresses()) {
+  // If arg is non-trivial and has an address type, make a +1 copy and operate
+  // on that.
+  if (!lowering.isTrivial() && arg->getType().isAddress()) {
     auto tmp = SGF.emitTemporaryAllocation(loc, arg->getType().getObjectType());
     SGF.B.createCopyAddr(loc, arg, tmp, IsNotTake, IsInitialization);
     return tmp;
@@ -1449,6 +1449,11 @@ emitObjCThunkArguments(SILGenFunction &SGF, SILLocation loc, SILDeclRef thunk,
       auto buf = SGF.emitTemporaryAllocation(loc, native.getType());
       native.forwardInto(SGF, loc, buf);
       native = SGF.emitManagedBufferWithCleanup(buf);
+    } else if (!fnConv.isSILIndirect(nativeInputs[i]) &&
+               native.getType().isAddress()) {
+      // Load the value if the argument has an address type and the native
+      // function expects the argument to be passed directly.
+      native = SGF.emitManagedLoadCopy(loc, native.getValue());
     }
 
     if (nativeInputs[i].isConsumedInCaller()) {

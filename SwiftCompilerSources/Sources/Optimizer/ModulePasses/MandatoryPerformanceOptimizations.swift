@@ -33,6 +33,11 @@ let mandatoryPerformanceOptimizations = ModulePass(name: "mandatory-performance-
   // For embedded Swift, optimize all the functions (there cannot be any
   // generics, type metadata, etc.)
   if moduleContext.options.enableEmbeddedSwift {
+    // We need to specialize all vtables which are referenced from non-generic contexts. Beside
+    // `alloc_ref`s of generic classes in non-generic functions, we also need to specialize generic
+    // superclasses of non-generic classes. E.g. `class Derived : Base<Int> {}`
+    specializeVTablesOfSuperclasses(moduleContext)
+
     worklist.addAllNonGenericFunctions(of: moduleContext)
   } else {
     worklist.addAllPerformanceAnnotatedFunctions(of: moduleContext)
@@ -40,6 +45,11 @@ let mandatoryPerformanceOptimizations = ModulePass(name: "mandatory-performance-
   }
 
   optimizeFunctionsTopDown(using: &worklist, moduleContext)
+
+  if moduleContext.options.enableEmbeddedSwift {
+    // Print errors for generic functions in vtables, which is not allowed in embedded Swift.
+    checkVTablesForGenericFunctions(moduleContext)
+  }
 }
 
 private func optimizeFunctionsTopDown(using worklist: inout FunctionWorklist,
@@ -92,15 +102,24 @@ private func optimize(function: Function, _ context: FunctionPassContext, _ modu
       // Embedded Swift specific transformations
       case let alloc as AllocRefInst:
         if context.options.enableEmbeddedSwift {
-          specializeVTableAndAddEntriesToWorklist(for: alloc.type, in: function, context, moduleContext, &worklist)
+          specializeVTableAndAddEntriesToWorklist(for: alloc.type, in: function,
+                                                  errorLocation: alloc.location,
+                                                  moduleContext, &worklist)
         }
       case let metatype as MetatypeInst:
         if context.options.enableEmbeddedSwift {
-          specializeVTableAndAddEntriesToWorklist(for: metatype.type, in: function, context, moduleContext, &worklist)
+          specializeVTableAndAddEntriesToWorklist(for: metatype.type, in: function,
+                                                  errorLocation: metatype.location,
+                                                  moduleContext, &worklist)
         }
       case let classMethod as ClassMethodInst:
         if context.options.enableEmbeddedSwift {
           _ = context.specializeClassMethodInst(classMethod)
+        }
+
+      case let initExRef as InitExistentialRefInst:
+        if context.options.enableEmbeddedSwift {
+          specializeWitnessTables(for: initExRef, moduleContext, &worklist)
         }
 
       // We need to de-virtualize deinits of non-copyable types to be able to specialize the deinitializers.
@@ -116,6 +135,16 @@ private func optimize(function: Function, _ context: FunctionPassContext, _ modu
       case let iem as InitExistentialMetatypeInst:
         if iem.uses.ignoreDebugUses.isEmpty {
           context.erase(instructionIncludingDebugUses: iem)
+        }
+
+      case let fri as FunctionRefInst:
+        // Mandatory de-virtualization and mandatory inlining might leave referenced functions in "serialized"
+        // functions with wrong linkage. Fix this by making the referenced function public.
+        // It's not great, because it can prevent dead code elimination. But it's only a rare case.
+        if function.serializedKind != .notSerialized,
+           !fri.referencedFunction.hasValidLinkageForFragileRef(function.serializedKind)
+        {
+          fri.referencedFunction.set(linkage: .public, moduleContext)
         }
 
       default:
@@ -134,25 +163,32 @@ private func optimize(function: Function, _ context: FunctionPassContext, _ modu
 }
 
 private func specializeVTableAndAddEntriesToWorklist(for type: Type, in function: Function,
-                                                     _ context: FunctionPassContext, _ moduleContext: ModulePassContext,
+                                                     errorLocation: Location,
+                                                     _ moduleContext: ModulePassContext,
                                                      _ worklist: inout FunctionWorklist) {
   let vTablesCountBefore = moduleContext.vTables.count
 
-  guard context.specializeVTable(for: type, in: function) != nil else {
+  guard specializeVTable(forClassType: type, errorLocation: errorLocation, moduleContext) != nil else {
     return
   }
 
   // More than one new vtable might have been created (superclasses), process them all
   let vTables = moduleContext.vTables
   for i in vTablesCountBefore ..< vTables.count {
-    for entry in vTables[i].entries {
-      worklist.pushIfNotVisited(entry.function)
+    for entry in vTables[i].entries
+      // A new vtable can still contain a generic function if the method couldn't be specialized for some reason
+      // and an error has been printed. Exclude generic functions to not run into an assert later.
+      where !entry.implementation.isGeneric
+    {
+      worklist.pushIfNotVisited(entry.implementation)
     }
   }
 }
 
 private func inlineAndDevirtualize(apply: FullApplySite, alreadyInlinedFunctions: inout Set<PathFunctionTuple>,
                                    _ context: FunctionPassContext, _ simplifyCtxt: SimplifyContext) {
+  // De-virtualization and inlining in/into a "serialized" function might create function references to functions
+  // with wrong linkage. We need to fix this later (see handling of FunctionRefInst in `optimize`).
   if simplifyCtxt.tryDevirtualize(apply: apply, isMandatory: true) != nil {
     return
   }
@@ -166,9 +202,7 @@ private func inlineAndDevirtualize(apply: FullApplySite, alreadyInlinedFunctions
     return
   }
 
-  if apply.canInline &&
-     shouldInline(apply: apply, callee: callee, alreadyInlinedFunctions: &alreadyInlinedFunctions)
-  {
+  if shouldInline(apply: apply, callee: callee, alreadyInlinedFunctions: &alreadyInlinedFunctions) {
     if apply.inliningCanInvalidateStackNesting  {
       simplifyCtxt.notifyInvalidatedStackNesting()
     }
@@ -196,7 +230,12 @@ private func removeUnusedMetatypeInstructions(in function: Function, _ context: 
 
 private func shouldInline(apply: FullApplySite, callee: Function, alreadyInlinedFunctions: inout Set<PathFunctionTuple>) -> Bool {
   if callee.isTransparent {
+    precondition(callee.hasOwnership, "transparent functions should have ownership at this stage of the pipeline")
     return true
+  }
+
+  if !apply.canInline {
+    return false
   }
 
   if apply is BeginApplyInst {
@@ -223,6 +262,45 @@ private func shouldInline(apply: FullApplySite, callee: Function, alreadyInlined
   }
 
   return false
+}
+
+private func specializeWitnessTables(for initExRef: InitExistentialRefInst, _ context: ModulePassContext,
+                                     _ worklist: inout FunctionWorklist)
+{
+  for conformance in initExRef.conformances where conformance.isConcrete {
+    let origWitnessTable = context.lookupWitnessTable(for: conformance)
+    if conformance.isSpecialized {
+      if origWitnessTable == nil {
+        let wt = specializeWitnessTable(forConformance: conformance, errorLocation: initExRef.location, context)
+        worklist.addWitnessMethods(of: wt)
+      }
+    } else if let origWitnessTable {
+      checkForGenericMethods(in: origWitnessTable, errorLocation: initExRef.location, context)
+    }
+  }
+}
+
+private func checkForGenericMethods(in witnessTable: WitnessTable,
+                                    errorLocation: Location,
+                                    _ context: ModulePassContext)
+{
+  for entry in witnessTable.entries where entry.kind == .method {
+    if let method = entry.methodFunction,
+       method.isGeneric
+    {
+      context.diagnosticEngine.diagnose(errorLocation.sourceLoc, .cannot_specialize_witness_method,
+                                        entry.methodRequirement)
+      return
+    }
+  }
+}
+
+private func checkVTablesForGenericFunctions(_ context: ModulePassContext) {
+  for vTable in context.vTables where !vTable.class.isGenericAtAnyLevel {
+    for entry in vTable.entries where entry.implementation.isGeneric {
+      context.diagnosticEngine.diagnose(entry.methodDecl.location.sourceLoc, .non_final_generic_class_function)
+    }
+  }
 }
 
 private extension FullApplySite {
@@ -426,6 +504,18 @@ fileprivate struct FunctionWorklist {
         }
       default:
         break
+      }
+    }
+  }
+
+  mutating func addWitnessMethods(of witnessTable: WitnessTable) {
+    for entry in witnessTable.entries where entry.kind == .method {
+      if let method = entry.methodFunction,
+         // A new witness table can still contain a generic function if the method couldn't be specialized for
+         // some reason and an error has been printed. Exclude generic functions to not run into an assert later.
+         !method.isGeneric
+      {
+        pushIfNotVisited(method)
       }
     }
   }
