@@ -91,8 +91,11 @@ func _canBeClass<T>(_: T.Type) -> Int8 {
 /// Returns: A new instance of type `U`, cast from `x`.
 @inlinable // unsafe-performance
 @_transparent
+@_preInverseGenerics
 @unsafe
-public func unsafeBitCast<T, U>(_ x: T, to type: U.Type) -> U {
+public func unsafeBitCast<T: ~Escapable, U>(
+  _ x: T, to type: U.Type
+) -> U {
   _precondition(MemoryLayout<T>.size == MemoryLayout<U>.size,
     "Can't unsafeBitCast between types of different sizes")
   return Builtin.reinterpretCast(x)
@@ -754,9 +757,10 @@ func _COWBufferForReading<T: AnyObject>(_ object: T) -> T {
 /// Returns `true` if type is a POD type. A POD type is a type that does not
 /// require any special handling on copying or destruction.
 @_transparent
+@_preInverseGenerics
 public // @testable
-func _isPOD<T>(_ type: T.Type) -> Bool {
-  return Bool(Builtin.ispod(type))
+func _isPOD<T: ~Copyable & ~Escapable>(_ type: T.Type) -> Bool {
+  Bool(Builtin.ispod(type))
 }
 
 /// Returns `true` if `type` is known to refer to a concrete type once all
