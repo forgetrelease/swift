@@ -5610,7 +5610,7 @@ NeverNullType TypeResolver::resolveTupleType(TupleTypeRepr *repr,
 
   if (options.contains(TypeResolutionFlags::SILType)) {
     if (repr->isParenType())
-      return ParenType::get(ctx, elements[0].getType());
+      return elements[0].getType();
   } else {
     // Single-element labeled tuples are not permitted outside of declarations
     // or SIL, either.
@@ -5626,7 +5626,7 @@ NeverNullType TypeResolver::resolveTupleType(TupleTypeRepr *repr,
 
     if (elements.size() == 1 && !elements[0].hasName() &&
         !elements[0].getType()->is<PackExpansionType>())
-      return ParenType::get(ctx, elements[0].getType());
+      return elements[0].getType();
   }
   
   if (moveOnlyElementIndex.has_value()) {
