@@ -34,6 +34,7 @@
 #include "swift/AST/Initializer.h"
 #include "swift/AST/ModuleLoader.h"
 #include "swift/AST/NameLookup.h"
+#include "swift/AST/NameLookupRequests.h"
 #include "swift/AST/PrettyStackTrace.h"
 #include "swift/AST/ProtocolConformance.h"
 #include "swift/AST/SourceFile.h"
@@ -404,34 +405,21 @@ void swift::loadDerivativeConfigurations(SourceFile &SF) {
   FrontendStatsTracer tracer(Ctx.Stats,
                              "load-derivative-configurations");
 
-  class DerivativeFinder : public ASTWalker {
-  public:
-    DerivativeFinder() {}
-
-    MacroWalking getMacroWalkingBehavior() const override {
-      return MacroWalking::Expansion;
-    }
-
-    PreWalkAction walkToDeclPre(Decl *D) override {
-      if (auto *afd = dyn_cast<AbstractFunctionDecl>(D)) {
-        for (auto *derAttr : afd->getAttrs().getAttributes<DerivativeAttr>()) {
-          // Resolve derivative function configurations from `@derivative`
-          // attributes by type-checking them.
-          (void)derAttr->getOriginalFunction(D->getASTContext());
-        }
-      }
-
-      return Action::Continue();
-    }
-  };
-
   switch (SF.Kind) {
   case SourceFileKind::DefaultArgument:
   case SourceFileKind::Library:
   case SourceFileKind::MacroExpansion:
   case SourceFileKind::Main: {
-    DerivativeFinder finder;
-    SF.walkContext(finder);
+    CustomDerivativesLookupRequest request(SF.getParentModule());
+    CustomDerivativesLookupResult result =
+        evaluateOrDefault(SF.getASTContext().evaluator, request, {});
+    for (AbstractFunctionDecl *afd : result) {
+      for (auto *derAttr : afd->getAttrs().getAttributes<DerivativeAttr>()) {
+        // Resolve derivative function configurations from `@derivative`
+        // attributes by type-checking them.
+        (void)derAttr->getOriginalFunction(SF.getASTContext());
+      }
+    }
     return;
   }
   case SourceFileKind::SIL:
