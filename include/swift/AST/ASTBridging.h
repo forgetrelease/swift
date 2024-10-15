@@ -853,7 +853,10 @@ BridgedSILGenNameAttr BridgedSILGenNameAttr_createParsed(
 // MARK: Decls
 //===----------------------------------------------------------------------===//
 
-SWIFT_NAME("BridgedDecl.setAttrs(self:_:)")
+SWIFT_NAME("getter:BridgedDecl.attrs(self:)")
+BridgedDeclAttributes BridgedDecl_getAttrs(BridgedDecl decl);
+
+SWIFT_NAME("setter:BridgedDecl.attrs(self:newValue:)")
 void BridgedDecl_setAttrs(BridgedDecl decl, BridgedDeclAttributes attrs);
 
 enum ENUM_EXTENSIBILITY_ATTR(closed) BridgedStaticSpelling {
