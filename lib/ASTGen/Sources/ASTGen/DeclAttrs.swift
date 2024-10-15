@@ -22,6 +22,10 @@ extension ASTGenVisitor {
     var attributes: BridgedDeclAttributes
     var staticSpelling: BridgedStaticSpelling
     var staticLoc: BridgedSourceLoc
+
+    func attach(to decl: BridgedDecl) {
+      decl.attrs = attributes
+    }
   }
 
   func generateDeclAttributes(_ node: some WithAttributesSyntax & WithModifiersSyntax, allowStatic: Bool) -> DeclAttributesResult {
