@@ -17,6 +17,22 @@ import SwiftIfConfig
 
 @_spi(ExperimentalLanguageFeatures) @_spi(RawSyntax) import SwiftSyntax
 
+/// Calls `visitor` on each declaration that an `@abi` attribute `decl` ought to apply to.
+/// This is usually just `decl` itself, but for pattern binding decls, it's all of the
+/// variables bound to it.
+func visitABIDecls(for decl: BridgedDecl, visitor: (BridgedDecl) -> Void) {
+  if let pbd = BridgedPatternBindingDecl(decl.asPatternBindingDecl) {
+    for pattern in pbd.patterns {
+      for varDecl in pattern.varDecls {
+        visitABIDecls(for: varDecl.asDecl, visitor: visitor)
+      }
+    }
+    return
+  }
+
+  visitor(decl)
+}
+
 extension ASTGenVisitor {
   struct DeclAttributesResult {
     var attributes: BridgedDeclAttributes
@@ -25,6 +41,11 @@ extension ASTGenVisitor {
 
     func attach(to decl: BridgedDecl) {
       decl.attrs = attributes
+      if let abiAttr = attributes.attrs.lazy.map(\.asABIAttr).compactMap(BridgedABIAttr.init).first {
+        visitABIDecls(for: decl) { declToConnect in
+          abiAttr.connectToInverse(attachedTo: declToConnect)
+        }
+      }
     }
   }
 
@@ -329,8 +350,29 @@ extension ASTGenVisitor {
   }
 
   func generateABIAttr(attribute node: AttributeSyntax) -> BridgedABIAttr? {
-    #warning("TODO: implement generateABIAttr")
-    fatalError("TODO: implement generateABIAttr")
+    guard
+      let arg = node.arguments?.as(ABIAttributeArgumentsSyntax.self)
+    else {
+      // TODO: diagnose
+      return nil
+    }
+
+    let abiDecl = self.generate(decl: arg.provider)
+
+    // Attach empty inverse @abi attributes to each (relevant) decl
+    visitABIDecls(for: abiDecl) { decl in
+      let attr = BridgedABIAttr.createImplicitInverse(self.ctx)
+      var attrs = decl.attrs
+      attrs.add(attr.asDeclAttribute)
+      decl.attrs = attrs
+    }
+
+    return .createParsed(
+      self.ctx,
+      atLoc: self.generateSourceLoc(node.atSign),
+      range: self.generateSourceRange(node),
+      abiDecl: abiDecl
+    )
   }
 
   func generateAlignmentAttr(attribute node: AttributeSyntax) -> BridgedAlignmentAttr? {
