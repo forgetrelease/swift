@@ -3224,7 +3224,7 @@ static FunctionPointer getProfilingFuncFor(IRGenFunction &IGF,
       os << replacementTypes.size();
       os << "__";
       for (auto replTy : replacementTypes) {
-        IRGenMangler mangler;
+        IRGenMangler mangler(IGF.IGM.Context);
         os << mangler.mangleTypeMetadataFull(replTy->getCanonicalType());
         os << "___";
       }
