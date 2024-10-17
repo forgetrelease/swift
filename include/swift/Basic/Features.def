@@ -433,6 +433,9 @@ EXPERIMENTAL_FEATURE(CoroutineAccessorsUnwindOnCallerError, false)
 /// modify/read coroutines use the callee-allocated ABI
 EXPERIMENTAL_FEATURE(CoroutineAccessorsAllocateInCallee, false)
 
+/// Allow the @abi attribute.
+SUPPRESSIBLE_EXPERIMENTAL_FEATURE(ABIAttribute, true)
+
 #undef EXPERIMENTAL_FEATURE_EXCLUDED_FROM_MODULE_INTERFACE
 #undef EXPERIMENTAL_FEATURE
 #undef UPCOMING_FEATURE

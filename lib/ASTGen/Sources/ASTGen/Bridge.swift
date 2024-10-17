@@ -17,6 +17,7 @@ import BasicBridging
 public protocol BridgedNullable: ExpressibleByNilLiteral {
   associatedtype RawPtr
   init(raw: RawPtr?)
+  var raw: RawPtr? { get }
 }
 extension BridgedNullable {
   public init(nilLiteral: ()) {
@@ -26,6 +27,8 @@ extension BridgedNullable {
 
 extension BridgedSourceLoc: /*@retroactive*/ swiftASTGen.BridgedNullable {}
 extension BridgedIdentifier: /*@retroactive*/ swiftASTGen.BridgedNullable {}
+extension BridgedNullableDeclAttribute: /*@retroactive*/ swiftASTGen.BridgedNullable {}
+extension BridgedNullableDecl: /*@retroactive*/ swiftASTGen.BridgedNullable {}
 extension BridgedNullableExpr: /*@retroactive*/ swiftASTGen.BridgedNullable {}
 extension BridgedNullableStmt: /*@retroactive*/ swiftASTGen.BridgedNullable {}
 extension BridgedNullableTypeRepr: /*@retroactive*/ swiftASTGen.BridgedNullable {}
@@ -34,6 +37,9 @@ extension BridgedNullableGenericParamList: /*@retroactive*/ swiftASTGen.BridgedN
 extension BridgedNullableTrailingWhereClause: /*@retroactive*/ swiftASTGen.BridgedNullable {}
 extension BridgedNullableParameterList: /*@retroactive*/ swiftASTGen.BridgedNullable {}
 extension BridgedNullablePatternBindingInitializer: /*@retroactive*/ swiftASTGen.BridgedNullable {}
+extension BridgedNullablePatternBindingDecl: /*@retroactive*/ swiftASTGen.BridgedNullable {}
+extension BridgedNullableVarDecl: /*@retroactive*/ swiftASTGen.BridgedNullable {}
+extension BridgedNullableABIAttr: /*@retroactive*/ swiftASTGen.BridgedNullable {}
 
 extension BridgedIdentifier: /*@retroactive*/ Swift.Equatable {
   public static func == (lhs: Self, rhs: Self) -> Bool {
@@ -46,6 +52,7 @@ extension BridgedIdentifier: /*@retroactive*/ Swift.Equatable {
 /// E.g. BridgedExpr vs BridgedNullableExpr.
 protocol BridgedHasNullable {
   associatedtype Nullable: BridgedNullable
+  init(raw: Nullable.RawPtr)
   var raw: Nullable.RawPtr { get }
 }
 extension Optional where Wrapped: BridgedHasNullable {
@@ -54,9 +61,23 @@ extension Optional where Wrapped: BridgedHasNullable {
     Wrapped.Nullable(raw: self?.raw)
   }
 }
+extension BridgedHasNullable {
+  init?(_ nullable: Nullable) {
+    guard let newRaw = nullable.raw else {
+      return nil
+    }
+    self.init(raw: newRaw)
+  }
+}
 
 extension BridgedStmt: BridgedHasNullable {
   typealias Nullable = BridgedNullableStmt
+}
+extension BridgedDeclAttribute: BridgedHasNullable {
+  typealias Nullable = BridgedNullableDeclAttribute
+}
+extension BridgedDecl: BridgedHasNullable {
+  typealias Nullable = BridgedNullableDecl
 }
 extension BridgedExpr: BridgedHasNullable {
   typealias Nullable = BridgedNullableExpr
@@ -78,6 +99,15 @@ extension BridgedParameterList: BridgedHasNullable {
 }
 extension BridgedPatternBindingInitializer: BridgedHasNullable {
   typealias Nullable = BridgedNullablePatternBindingInitializer
+}
+extension BridgedPatternBindingDecl: BridgedHasNullable {
+  typealias Nullable = BridgedNullablePatternBindingDecl
+}
+extension BridgedVarDecl: BridgedHasNullable {
+  typealias Nullable = BridgedNullableVarDecl
+}
+extension BridgedABIAttr: BridgedHasNullable {
+  typealias Nullable = BridgedNullableABIAttr
 }
 
 public extension BridgedSourceLoc {
@@ -228,6 +258,56 @@ extension BridgedSourceRange {
   @inline(__always)
   init(startToken: TokenSyntax, endToken: TokenSyntax, in astgen: ASTGenVisitor) {
     self = astgen.generateSourceRange(start: startToken, end: endToken)
+  }
+}
+
+extension BridgedPatternBindingDecl {
+  var patterns: [BridgedPattern] {
+    return (0 ..< patternCount).map(pattern(at:))
+  }
+}
+
+extension BridgedPattern {
+  private enum FetchVarDeclsError: Error {
+    case insufficientCapacity(Int)
+  }
+
+  private func fetchVarDecls(capacity: Int) throws -> [BridgedVarDecl] {
+    return try Array(unsafeUninitializedCapacity: capacity) { buffer, initializedCount in
+      let fullCount = self.unsafeFetchVarDecls(
+        into: buffer.baseAddress,
+        capacity: buffer.count
+      )
+
+      guard fullCount <= buffer.count else {
+        throw FetchVarDeclsError.insufficientCapacity(fullCount)
+      }
+
+      // `unsafeFetchVarDecls` writes nothing if `fullCount` > `capacity`, so
+      // it's correct to put this after the `throw`.
+      initializedCount = fullCount
+    }
+  }
+
+  var varDecls: [BridgedVarDecl] {
+    do {
+      return try fetchVarDecls(capacity: 8) // "probably big enough" guess
+    }
+    catch FetchVarDeclsError.insufficientCapacity(let neededCapacity) {
+      return try! fetchVarDecls(capacity: neededCapacity)
+    }
+    catch {
+      fatalError("Unknown error \(error)")
+    }
+  }
+}
+
+extension BridgedDeclAttributes {
+  var attrs: UnfoldSequence<BridgedDeclAttribute, BridgedNullableDeclAttribute> {
+    return sequence(state: nil) { prior in
+      prior = self.attr(after: prior)
+      return BridgedDeclAttribute(prior)
+    }
   }
 }
 
