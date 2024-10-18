@@ -28,17 +28,17 @@ public struct Span<Element: ~Copyable & ~Escapable>: Copyable, ~Escapable {
     _unchecked start: UnsafeRawPointer?,
     count: Int
   ) -> dependsOn(immortal) Self {
-    _pointer = .init(start)
+    _pointer = start
     _count = count
   }
 }
 
 @_disallowFeatureSuppression(NonescapableTypes)
-@available(*, unavailable)
-extension Span: Sendable {}
+extension Span: @unchecked Sendable where Element: Sendable {}
 
 @_disallowFeatureSuppression(NonescapableTypes)
 extension Span where Element: ~Copyable {
+
   @_disallowFeatureSuppression(NonescapableTypes)
   @usableFromInline @inline(__always)
   internal init(
@@ -63,8 +63,7 @@ extension Span where Element: ~Copyable {
     _unsafeElements buffer: UnsafeBufferPointer<Element>
   ) -> dependsOn(immortal) Self {
     _precondition(
-      buffer.count == 0 ||
-      ((Int(bitPattern: buffer.baseAddress.unsafelyUnwrapped) &
+      ((Int(bitPattern: buffer.baseAddress) &
         (MemoryLayout<Element>.alignment&-1)) == 0),
       "baseAddress must be properly aligned to access Element"
     )
@@ -106,12 +105,12 @@ extension Span where Element: ~Copyable {
     count: Int
   ) -> dependsOn(immortal) Self {
     _precondition(count >= 0, "Count must not be negative")
-    self.init(_unsafeElements: .init(_uncheckedStart: start, count: count))
+    self.init(_unsafeElements: .init(start: start, count: count))
   }
 }
 
 @_disallowFeatureSuppression(NonescapableTypes)
-extension Span where Element: BitwiseCopyable {
+extension Span {
 
   /// Unsafely create a `Span` over initialized memory.
   ///
@@ -125,9 +124,9 @@ extension Span where Element: BitwiseCopyable {
   @_disallowFeatureSuppression(NonescapableTypes)
   @_alwaysEmitIntoClient
   public init(
-    _unsafeElements buffer: UnsafeBufferPointer<Element>
+    _unsafeElements buffer: Slice<UnsafeBufferPointer<Element>>
   ) -> dependsOn(immortal) Self {
-    self.init(_unchecked: buffer)
+    self.init(_unsafeElements: UnsafeBufferPointer(rebasing: buffer))
   }
 
   /// Unsafely create a `Span` over initialized memory.
@@ -142,31 +141,14 @@ extension Span where Element: BitwiseCopyable {
   @_disallowFeatureSuppression(NonescapableTypes)
   @_alwaysEmitIntoClient
   public init(
-    _unsafeElements buffer: UnsafeMutableBufferPointer<Element>
+    _unsafeElements buffer: Slice<UnsafeMutableBufferPointer<Element>>
   ) -> dependsOn(immortal) Self {
-    self.init(_unsafeElements: UnsafeBufferPointer(buffer))
+    self.init(_unsafeElements: UnsafeBufferPointer(rebasing: buffer))
   }
+}
 
-  /// Unsafely create a `Span` over initialized memory.
-  ///
-  /// The memory representing `count` instances starting at
-  /// `pointer` must be owned by the instance `owner`,
-  /// meaning that as long as `owner` is alive the memory will remain valid.
-  ///
-  /// - Parameters:
-  ///   - pointer: a pointer to the first initialized element.
-  ///   - count: the number of initialized elements in the span.
-  ///   - owner: a binding whose lifetime must exceed that of
-  ///            the newly created `Span`.
-  @_disallowFeatureSuppression(NonescapableTypes)
-  @_alwaysEmitIntoClient
-  public init(
-    _unsafeStart start: UnsafePointer<Element>,
-    count: Int
-  ) -> dependsOn(immortal) Self {
-    _precondition(count >= 0, "Count must not be negative")
-    self.init(_unchecked: start, count: count)
-  }
+@_disallowFeatureSuppression(NonescapableTypes)
+extension Span where Element: BitwiseCopyable {
 
   /// Unsafely create a `Span` over initialized memory.
   ///
@@ -187,14 +169,15 @@ extension Span where Element: BitwiseCopyable {
   public init(
     _unsafeBytes buffer: UnsafeRawBufferPointer
   ) -> dependsOn(immortal) Self {
-    let (byteCount, stride) = (buffer.count, MemoryLayout<Element>.stride)
-    _precondition(byteCount >= 0, "Count must not be negative")
-    let (count, remainder) = byteCount.quotientAndRemainder(dividingBy: stride)
-    _precondition(remainder == 0)
-    self.init(
-      _unchecked: buffer.baseAddress?.assumingMemoryBound(to: Element.self),
-      count: count
+    _precondition(
+      ((Int(bitPattern: buffer.baseAddress) &
+        (MemoryLayout<Element>.alignment&-1)) == 0),
+      "baseAddress must be properly aligned to access Element"
     )
+    let (byteCount, stride) = (buffer.count, MemoryLayout<Element>.stride)
+    let (count, remainder) = byteCount.quotientAndRemainder(dividingBy: stride)
+    _precondition(remainder == 0, "Span must contain a whole number of elements")
+    self.init(_unchecked: buffer.baseAddress, count: count)
   }
 
   /// Unsafely create a `Span` over initialized memory.
@@ -237,13 +220,23 @@ extension Span where Element: BitwiseCopyable {
     byteCount: Int
   ) -> dependsOn(immortal) Self {
     _precondition(byteCount >= 0, "Count must not be negative")
-    let stride = MemoryLayout<Element>.stride
-    let (count, remainder) = byteCount.quotientAndRemainder(dividingBy: stride)
-    _precondition(remainder == 0)
-    self.init(
-      _unchecked: pointer.assumingMemoryBound(to: Element.self),
-      count: count
-    )
+    self.init(_unsafeBytes: .init(start: pointer, count: byteCount))
+  }
+
+  @_disallowFeatureSuppression(NonescapableTypes)
+  @_alwaysEmitIntoClient
+  public init(
+    _unsafeBytes buffer: Slice<UnsafeRawBufferPointer>
+  ) -> dependsOn(immortal) Self {
+    self.init(_unsafeBytes: UnsafeRawBufferPointer(rebasing: buffer))
+  }
+
+  @_disallowFeatureSuppression(NonescapableTypes)
+  @_alwaysEmitIntoClient
+  public init(
+    _unsafeBytes buffer: Slice<UnsafeMutableRawBufferPointer>
+  ) -> dependsOn(immortal) Self {
+    self.init(_unsafeBytes: UnsafeRawBufferPointer(rebasing: buffer))
   }
 }
 
@@ -348,51 +341,17 @@ extension Span where Element: ~Copyable {
   @_alwaysEmitIntoClient
   public var isEmpty: Bool { _count == 0 }
 
+  /// The representation for a position in `Span`.
+  public typealias Index = Int
+
   /// The indices that are valid for subscripting the span, in ascending
   /// order.
   ///
   /// - Complexity: O(1)
+  @_disallowFeatureSuppression(NonescapableTypes)
   @_alwaysEmitIntoClient
-  public var _indices: Range<Int> {
+  public var indices: Range<Index> {
     Range(_uncheckedBounds: (0, _count))
-  }
-}
-
-//MARK: Bounds Checking
-@_disallowFeatureSuppression(NonescapableTypes)
-extension Span where Element: ~Copyable {
-
-  /// Return true if `offset` is a valid offset into this `Span`
-  ///
-  /// - Parameters:
-  ///   - position: an index to validate
-  /// - Returns: true if `offset` is a valid index
-  @_disallowFeatureSuppression(NonescapableTypes)
-  @_alwaysEmitIntoClient
-  public func boundsContain(_ offset: Int) -> Bool {
-    0 <= offset && offset < count
-  }
-
-  /// Return true if `offsets` is a valid range of offsets into this `Span`
-  ///
-  /// - Parameters:
-  ///   - offsets: a range of indices to validate
-  /// - Returns: true if `offsets` is a valid range of indices
-  @_disallowFeatureSuppression(NonescapableTypes)
-  @_alwaysEmitIntoClient
-  public func boundsContain(_ offsets: Range<Int>) -> Bool {
-    boundsContain(offsets.lowerBound) && offsets.upperBound <= count
-  }
-
-  /// Return true if `offsets` is a valid range of offsets into this `Span`
-  ///
-  /// - Parameters:
-  ///   - offsets: a range of indices to validate
-  /// - Returns: true if `offsets` is a valid range of indices
-  @_disallowFeatureSuppression(NonescapableTypes)
-  @_alwaysEmitIntoClient
-  public func boundsContain(_ offsets: ClosedRange<Int>) -> Bool {
-    boundsContain(offsets.lowerBound) && offsets.upperBound < count
   }
 }
 
@@ -403,7 +362,7 @@ extension Span where Element: BitwiseCopyable {
   ///
   /// - Returns: a RawSpan over the memory represented by this span
   @_disallowFeatureSuppression(NonescapableTypes)
-  @unsafe // remove when the lifetime inference is fixed
+  @unsafe //FIXME: remove when the lifetime inference is fixed
   @_alwaysEmitIntoClient
   public var _unsafeRawSpan: RawSpan { RawSpan(_unsafeSpan: self) }
 }
@@ -418,10 +377,11 @@ extension Span where Element: ~Copyable {
   ///     must be greater or equal to zero, and less than `count`.
   ///
   /// - Complexity: O(1)
+  @_disallowFeatureSuppression(NonescapableTypes)
   @_alwaysEmitIntoClient
-  public subscript(_ position: Int) -> Element {
+  public subscript(_ position: Index) -> Element {
     _read {
-      _precondition(boundsContain(position))
+      _precondition(indices.contains(position), "index out of bounds")
       yield self[unchecked: position]
     }
   }
@@ -434,11 +394,13 @@ extension Span where Element: ~Copyable {
   ///     must be greater or equal to zero, and less than `count`.
   ///
   /// - Complexity: O(1)
+  @_disallowFeatureSuppression(NonescapableTypes)
   @unsafe
   @_alwaysEmitIntoClient
-  public subscript(unchecked position: Int) -> Element {
+  public subscript(unchecked position: Index) -> Element {
+    //FIXME: change to unsafeRawAddress or unsafeAddress when ready
     _read {
-      let element = UnsafeRawPointer(_start).advanced(by: position&*MemoryLayout<Element>.stride)
+      let element = _start.advanced(by: position&*MemoryLayout<Element>.stride)
       let binding = Builtin.bindMemory(element._rawValue, count._builtinWordValue, Element.self)
       defer { Builtin.rebindMemory(element._rawValue, binding) }
       yield UnsafePointer<Element>(element._rawValue).pointee
@@ -455,10 +417,14 @@ extension Span where Element: BitwiseCopyable {
   ///     must be greater or equal to zero, and less than `count`.
   ///
   /// - Complexity: O(1)
+  @_disallowFeatureSuppression(NonescapableTypes)
   @_alwaysEmitIntoClient
-  public subscript(_ position: Int) -> Element {
+  public subscript(_ position: Index) -> Element {
     get {
-      _precondition(boundsContain(position))
+      _precondition(
+        UInt(bitPattern: position) <  UInt(bitPattern: _count),
+        "index out of bounds"
+      )
       return self[unchecked: position]
     }
   }
@@ -471,11 +437,12 @@ extension Span where Element: BitwiseCopyable {
   ///     must be greater or equal to zero, and less than `count`.
   ///
   /// - Complexity: O(1)
+  @_disallowFeatureSuppression(NonescapableTypes)
   @unsafe
   @_alwaysEmitIntoClient
-  public subscript(unchecked position: Int) -> Element {
+  public subscript(unchecked position: Index) -> Element {
     get {
-      let address = UnsafeRawPointer(_start).advanced(by: position&*MemoryLayout<Element>.stride)
+      let address = _start.advanced(by: position&*MemoryLayout<Element>.stride)
       return address.loadUnaligned(as: Element.self)
     }
   }
@@ -499,14 +466,18 @@ extension Span where Element: ~Copyable {
   ///
   /// - Complexity: O(1)
   @_disallowFeatureSuppression(NonescapableTypes)
-  @usableFromInline func _extracting(_ bounds: Range<Int>) -> Self {
-    _precondition(boundsContain(bounds))
+  @usableFromInline func _extracting(_ bounds: Range<Index>) -> Self {
+    _precondition(
+      UInt(bitPattern: bounds.lowerBound) <  UInt(bitPattern: _count) &&
+      UInt(bitPattern: bounds.upperBound) <= UInt(bitPattern: _count),
+      "index range out of bounds"
+    )
     return _extracting(unchecked: bounds)
   }
 
   @_disallowFeatureSuppression(NonescapableTypes)
   @_alwaysEmitIntoClient
-  public mutating func _shrink(to bounds: Range<Int>) {
+  public mutating func _shrink(to bounds: Range<Index>) {
     self = _extracting(bounds)
   }
 
@@ -527,17 +498,15 @@ extension Span where Element: ~Copyable {
   /// - Complexity: O(1)
   @_disallowFeatureSuppression(NonescapableTypes)
   @unsafe
-  @usableFromInline func _extracting(unchecked bounds: Range<Int>) -> Self {
-    Span(
-      _unchecked: _pointer?.advanced(by: bounds.lowerBound*MemoryLayout<Element>.stride),
-      count: bounds.count
-    )
+  @usableFromInline func _extracting(unchecked bounds: Range<Index>) -> Self {
+    let delta = bounds.lowerBound&*MemoryLayout<Element>.stride
+    return Span(_unchecked: _pointer?.advanced(by: delta), count: bounds.count)
   }
 
   @_disallowFeatureSuppression(NonescapableTypes)
   @unsafe
   @_alwaysEmitIntoClient
-  public mutating func _shrink(toUnchecked bounds: Range<Int>) {
+  public mutating func _shrink(toUnchecked bounds: Range<Index>) {
     self = _extracting(unchecked: bounds)
   }
 
@@ -556,7 +525,7 @@ extension Span where Element: ~Copyable {
   /// - Complexity: O(1)
   @_disallowFeatureSuppression(NonescapableTypes)
   @usableFromInline func _extracting(_ bounds: some RangeExpression<Int>) -> Self {
-    _extracting(bounds.relative(to: _indices))
+    _extracting(bounds.relative(to: indices))
   }
 
   @_disallowFeatureSuppression(NonescapableTypes)
@@ -585,7 +554,7 @@ extension Span where Element: ~Copyable {
   @usableFromInline func _extracting(
     uncheckedBounds bounds: some RangeExpression<Int>
   ) -> Self {
-    _extracting(unchecked: bounds.relative(to: _indices))
+    _extracting(unchecked: bounds.relative(to: indices))
   }
 
   @_disallowFeatureSuppression(NonescapableTypes)
@@ -635,7 +604,9 @@ extension Span where Element: ~Copyable  {
     guard let pointer = _pointer, count > 0 else {
       return try body(.init(start: nil, count: 0))
     }
-    let binding = Builtin.bindMemory(pointer._rawValue, count._builtinWordValue, Element.self)
+    let binding = Builtin.bindMemory(
+      pointer._rawValue, count._builtinWordValue, Element.self
+    )
     defer { Builtin.rebindMemory(pointer._rawValue, binding) }
     return try body(.init(start: .init(pointer._rawValue), count: count))
   }
@@ -683,10 +654,10 @@ extension Span where Element: ~Copyable {
   ///
   /// Parameters:
   /// - span: a span that may be a subrange of `self`
-  /// Returns: A range of offsets within `self`, or `nil`
+  /// Returns: A range of indices within `self`, or `nil`
   @_disallowFeatureSuppression(NonescapableTypes)
   @_alwaysEmitIntoClient
-  public func indices(of span: borrowing Self) -> Range<Int>? {
+  public func indices(of span: borrowing Self) -> Range<Index>? {
     if span._count > _count { return nil }
     guard let subspanStart = span._pointer, _count > 0 else {
       return _pointer == span._pointer ? Range(_uncheckedBounds: (0, 0)) : nil

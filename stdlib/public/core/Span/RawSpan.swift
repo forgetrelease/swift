@@ -34,8 +34,7 @@ public struct RawSpan: Copyable, ~Escapable {
 }
 
 @_disallowFeatureSuppression(NonescapableTypes)
-@available(*, unavailable)
-extension RawSpan: Sendable {}
+extension RawSpan: @unchecked Sendable {}
 
 @_disallowFeatureSuppression(NonescapableTypes)
 extension RawSpan {
@@ -59,6 +58,14 @@ extension RawSpan {
     )
   }
 
+  @_disallowFeatureSuppression(NonescapableTypes)
+  @_alwaysEmitIntoClient
+  public init(
+    _unsafeBytes buffer: Slice<UnsafeRawBufferPointer>
+  ) -> dependsOn(immortal) Self {
+    self.init(_unsafeBytes: UnsafeRawBufferPointer(rebasing: buffer))
+  }
+
   /// Unsafely create a `RawSpan` over initialized memory.
   ///
   /// The memory in `buffer` must be owned by the instance `owner`,
@@ -74,6 +81,14 @@ extension RawSpan {
     _unsafeBytes buffer: UnsafeMutableRawBufferPointer
   ) -> dependsOn(immortal) Self {
     self.init(_unsafeBytes: UnsafeRawBufferPointer(buffer))
+  }
+
+  @_disallowFeatureSuppression(NonescapableTypes)
+  @_alwaysEmitIntoClient
+  public init(
+    _unsafeBytes buffer: Slice<UnsafeMutableRawBufferPointer>
+  ) -> dependsOn(immortal) Self {
+    self.init(_unsafeBytes: UnsafeRawBufferPointer(rebasing: buffer))
   }
 
   /// Unsafely create a `RawSpan` over initialized memory.
@@ -162,12 +177,12 @@ extension RawSpan {
   @_disallowFeatureSuppression(NonescapableTypes)
   @unsafe // remove when fixing the lifetime annotation
   @_alwaysEmitIntoClient
-  public init<T: BitwiseCopyable>(
-    _unsafeSpan span: borrowing Span<T>
+  public init<Element: BitwiseCopyable>(
+    _unsafeSpan span: borrowing Span<Element>
   ) -> dependsOn(immortal) Self {
     self.init(
       _unchecked: UnsafeRawPointer(span._start),
-      byteCount: span.count * MemoryLayout<T>.stride
+      byteCount: span.count &* MemoryLayout<Element>.stride
     )
   }
 }
@@ -205,46 +220,8 @@ extension RawSpan {
   ///
   /// - Complexity: O(1)
   @_alwaysEmitIntoClient
-  public var _byteOffsets: Range<Int> {
+  public var byteOffsets: Range<Int> {
     .init(_uncheckedBounds: (0, byteCount))
-  }
-}
-
-//MARK: Bounds Checking
-@_disallowFeatureSuppression(NonescapableTypes)
-extension RawSpan {
-
-  /// Return true if `offset` is a valid byte offset into this `RawSpan`
-  ///
-  /// - Parameters:
-  ///   - position: a byte offset to validate
-  /// - Returns: true if `offset` is a valid byte offset
-  @_disallowFeatureSuppression(NonescapableTypes)
-  @_alwaysEmitIntoClient
-  public func boundsContain(_ offset: Int) -> Bool {
-    0 <= offset && offset < byteCount
-  }
-
-  /// Return true if `offsets` is a valid range of offsets into this `RawSpan`
-  ///
-  /// - Parameters:
-  ///   - offsets: a range of byte offsets to validate
-  /// - Returns: true if `offsets` is a valid range of byte offsets
-  @_disallowFeatureSuppression(NonescapableTypes)
-  @_alwaysEmitIntoClient
-  public func boundsContain(_ offsets: Range<Int>) -> Bool {
-    boundsContain(offsets.lowerBound) && offsets.upperBound <= byteCount
-  }
-
-  /// Return true if `offsets` is a valid range of offsets into this `RawSpan`
-  ///
-  /// - Parameters:
-  ///   - offsets: a range of byte offsets to validate
-  /// - Returns: true if `offsets` is a valid range of byte offsets
-  @_disallowFeatureSuppression(NonescapableTypes)
-  @_alwaysEmitIntoClient
-  public func boundsContain(_ offsets: ClosedRange<Int>) -> Bool {
-    boundsContain(offsets.lowerBound) && offsets.upperBound < byteCount
   }
 }
 
@@ -267,7 +244,11 @@ extension RawSpan {
   /// - Complexity: O(1)
   @_disallowFeatureSuppression(NonescapableTypes)
   @usableFromInline func _extracting(_ bounds: Range<Int>) -> Self {
-    _precondition(boundsContain(bounds))
+    _precondition(
+      UInt(bitPattern: bounds.lowerBound) <  UInt(bitPattern: _count) &&
+      UInt(bitPattern: bounds.upperBound) <= UInt(bitPattern: _count),
+      "byte offset range out of bounds"
+    )
     return _extracting(unchecked: bounds)
   }
 
@@ -323,7 +304,7 @@ extension RawSpan {
   /// - Complexity: O(1)
   @_disallowFeatureSuppression(NonescapableTypes)
   @usableFromInline func _extracting(_ bounds: some RangeExpression<Int>) -> Self {
-    _extracting(bounds.relative(to: _byteOffsets))
+    _extracting(bounds.relative(to: byteOffsets))
   }
 
   @_disallowFeatureSuppression(NonescapableTypes)
@@ -352,7 +333,7 @@ extension RawSpan {
   @usableFromInline func _extracting(
     unchecked bounds: some RangeExpression<Int>
   ) -> Self {
-    _extracting(unchecked: bounds.relative(to: _byteOffsets))
+    _extracting(unchecked: bounds.relative(to: byteOffsets))
   }
 
   @_disallowFeatureSuppression(NonescapableTypes)
@@ -458,9 +439,11 @@ extension RawSpan {
   public func unsafeLoad<T>(
     fromByteOffset offset: Int = 0, as: T.Type
   ) -> T {
-    _precondition(boundsContain(
-      Range(_uncheckedBounds: (offset, offset+MemoryLayout<T>.size))
-    ))
+    _precondition(
+      UInt(bitPattern: offset) <  UInt(bitPattern: _count) &&
+      UInt(bitPattern: offset&+MemoryLayout<T>.size) <= UInt(bitPattern: _count),
+      "byte offset range out of bounds"
+    )
     return unsafeLoad(fromUncheckedByteOffset: offset, as: T.self)
   }
 
@@ -513,9 +496,11 @@ extension RawSpan {
   public func unsafeLoadUnaligned<T: BitwiseCopyable>(
     fromByteOffset offset: Int = 0, as: T.Type
   ) -> T {
-    _precondition(boundsContain(
-      Range(_uncheckedBounds: (offset, offset+MemoryLayout<T>.size))
-    ))
+    _precondition(
+      UInt(bitPattern: offset) <  UInt(bitPattern: _count) &&
+      UInt(bitPattern: offset&+MemoryLayout<T>.size) <= UInt(bitPattern: _count),
+      "byte offset range out of bounds"
+    )
     return unsafeLoadUnaligned(fromUncheckedByteOffset: offset, as: T.self)
   }
 
