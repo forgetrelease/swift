@@ -4334,6 +4334,11 @@ bool MissingMemberFailure::diagnoseAsError() {
     emitDiagnostic(diagnostic, baseType, getName())
         .highlight(getSourceRange())
         .highlight(nameLoc.getSourceRange());
+    if (getName().isSimpleName("VectorOfU32")) {
+      llvm::errs() << "!!!! dumping type:\n";
+      baseType->getAnyNominal()->dump(llvm::errs());
+    }
+
     const auto &ctx = getSolution().getDC()->getASTContext();
     if (!ctx.LangOpts.DisableExperimentalClangImporterDiagnostics) {
       ctx.getClangModuleLoader()->diagnoseMemberValue(getName().getFullName(),
