@@ -1003,7 +1003,8 @@ void LargeValueVisitor::visitAllocStackInst(AllocStackInst *instr) {
 
 void LargeValueVisitor::visitPointerToAddressInst(PointerToAddressInst *instr) {
   SILType currSILType = instr->getType().getObjectType();
-  if (getInnerFunctionType(currSILType)) {
+  if (pass.containsDifferentFunctionSignature(pass.F->getLoweredFunctionType(),
+                                              currSILType)) {
     pass.pointerToAddrkInstsToMod.push_back(instr);
   }
 }
@@ -4044,8 +4045,8 @@ protected:
 
       SILBuilder caseBuilder = assignment.getBuilder(caseBB->begin());
       auto *caseAddr =
-          caseBuilder.createUncheckedTakeEnumDataAddr(loc, opdAddr, caseDecl);
-
+        caseBuilder.createUncheckedTakeEnumDataAddr(loc, opdAddr, caseDecl,
+                                                    caseArg->getType().getAddressType());
       if (assignment.isLargeLoadableType(caseArg->getType())) {
         assignment.mapValueToAddress(caseArg, caseAddr);
         assignment.markBlockArgumentForDeletion(caseBB);
