@@ -10,6 +10,7 @@
 // RUN: | %FileCheck %s --check-prefixes=CHECK,CHECK-UNWIND
 
 // REQUIRES: swift_feature_CoroutineAccessors
+// REQUIRES: swift_feature_CoroutineAccessorsUnwindOnCallerError
 
 public struct S {
 public var o: any AnyObject
