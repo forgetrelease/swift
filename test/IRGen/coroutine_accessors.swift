@@ -11,7 +11,9 @@
 // RUN:         -enable-experimental-feature CoroutineAccessors \
 // RUN:         -enable-experimental-feature CoroutineAccessorsAllocateInCallee
 
-// REQUIRES: asserts
+// REQUIRES: swift_feature_CoroutineAccessors
+// REQUIRES: swift_feature_CoroutineAccessorsAllocateInCallee
+
 
 public struct S {
 public var o: any AnyObject
