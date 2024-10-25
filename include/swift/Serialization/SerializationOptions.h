@@ -151,7 +151,7 @@ namespace swift {
 
     bool AutolinkForceLoad = false;
     bool SerializeAllSIL = false;
-    bool SerializeDebugInfoSIL = true;
+    bool SerializeDebugInfoSIL = false;
     bool SerializeOptionsForDebugging = false;
     bool IsSIB = false;
     bool DisableCrossModuleIncrementalInfo = false;
