@@ -197,7 +197,6 @@ UNINTERESTING_FEATURE(FixedArrays)
 UNINTERESTING_FEATURE(GroupActorErrors)
 UNINTERESTING_FEATURE(SameElementRequirements)
 UNINTERESTING_FEATURE(UnspecifiedMeansMainActorIsolated)
-UNINTERESTING_FEATURE(GlobalActorInferenceCutoff)
 UNINTERESTING_FEATURE(KeyPathWithStaticMembers)
 UNINTERESTING_FEATURE(GenerateForceToMainActorThunks)
 
