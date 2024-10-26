@@ -546,6 +546,7 @@ deriveHashable_hashInto(
       /*Async=*/false,
       /*Throws=*/false, /*ThrownType=*/Type(),
       /*GenericParams=*/nullptr, params, returnType, parentDC);
+  hashDecl->setSynthesized();
   hashDecl->setBodySynthesizer(bodySynthesizer);
   hashDecl->copyFormalAccessFrom(derived.Nominal,
                                  /*sourceIsParentContext=*/true);
