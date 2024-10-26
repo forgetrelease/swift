@@ -2546,6 +2546,10 @@ namespace {
         }
       }
 
+      if (decl->getIdentifier() &&
+          decl->getName() == "__normal_iterator") {
+        llvm::errs() << "//// IMPORTED __normal_iterator\n";
+      }
       result->setMemberLoader(&Impl, 0);
       return result;
     }
@@ -2726,6 +2730,8 @@ namespace {
     }
 
     Decl *VisitCXXRecordDecl(const clang::CXXRecordDecl *decl) {
+      if (decl->isDependentContext())
+        return nullptr;
       // This can be called from lldb without C++ interop being enabled: There
       // may be C++ declarations in imported modules, but the interface for
       // those modules may be a pure C or Objective-C interface.
@@ -2853,6 +2859,13 @@ namespace {
               const_cast<clang::CXXRecordDecl *>(decl));
           clangSema.DefineImplicitDestructor(clang::SourceLocation(), dtor);
         }
+      } else {
+        llvm::errs() << "??? skipping generation for:\n";
+        llvm::errs() << "??? !decl->isBeingDefined(): " << !decl->isBeingDefined() << "\n";
+        llvm::errs() << "??? !decl->isDependentContext(): " << !decl->isDependentContext() << "\n";
+        llvm::errs() << "??? areRecordFieldsComplete(decl): " << areRecordFieldsComplete(decl) << "\n";
+        decl->dump(llvm::errs());
+        llvm::errs() << "\n??? =================\n";
       }
 
       // It is import that we bail on an unimportable record *before* we import
@@ -2881,6 +2894,7 @@ namespace {
       auto result = VisitRecordDecl(decl);
       if (!result)
         return nullptr;
+      Impl.ImportedDecls[{decl, getVersion()}] = result;
 
       if (decl->hasAttr<clang::TrivialABIAttr>()) {
         // We cannot yet represent trivial_abi C++ records in Swift.
@@ -2932,6 +2946,12 @@ namespace {
 
       if (auto *ntd = dyn_cast<NominalTypeDecl>(result))
         addExplicitProtocolConformances(ntd, decl);
+      
+      if (decl->getIdentifier() && decl->isInStdNamespace() &&
+          decl->getName() == "vector") {
+        llvm::errs() << "//// IMPORTED vector\n";
+        decl->dump(llvm::errs());
+      }
 
       return result;
     }
@@ -3978,6 +3998,7 @@ namespace {
     }
 
     Decl *VisitCXXMethodDecl(const clang::CXXMethodDecl *decl) {
+      if (decl->isDependentContext()) return nullptr;
       // The static `operator ()` introduced in C++ 23 is still callable as an
       // instance operator in C++, and we want to preserve the ability to call
       // it as an instance method in Swift as well for source compatibility.

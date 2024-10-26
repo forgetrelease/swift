@@ -449,7 +449,7 @@ void swift::conformToCxxIteratorIfNeeded(
   auto underlyingCategoryDecl = unwrapUnderlyingTypeDecl(iteratorCategory);
   if (!underlyingCategoryDecl)
     return;
-
+  
   auto isIteratorTagDecl = [&](const clang::CXXRecordDecl *base,
                                StringRef tag) {
     return base->isInStdNamespace() && base->getIdentifier() &&
@@ -484,6 +484,10 @@ void swift::conformToCxxIteratorIfNeeded(
 
   if (!isInputIterator)
     return;
+  if (clangDecl->getIdentifier() &&
+      clangDecl->getName() == "__normal_iterator") {
+    llvm::errs() << "//// conforming __normal_iterator to UnsafeCxxIter: is input iterator\n";
+  }
 
   bool isContiguousIterator = false;
   // In C++20, `std::contiguous_iterator_tag` is specified as a type called
@@ -505,17 +509,32 @@ void swift::conformToCxxIteratorIfNeeded(
             });
     }
   }
+  
+  if (clangDecl->getIdentifier() &&
+      clangDecl->getName() == "__normal_iterator") {
+    llvm::errs() << "//// conforming __normal_iterator to UnsafeCxxIter: checking pointee\n";
+  }
 
   // Check if present: `var pointee: Pointee { get }`
   auto pointeeId = ctx.getIdentifier("pointee");
   auto pointee = lookupDirectSingleWithoutExtensions<VarDecl>(decl, pointeeId);
   if (!pointee || pointee->isGetterMutating() || pointee->getTypeInContext()->hasError())
     return;
+  
+  if (clangDecl->getIdentifier() &&
+      clangDecl->getName() == "__normal_iterator") {
+    llvm::errs() << "//// conforming __normal_iterator to UnsafeCxxIter: checking pointee settable\n";
+  }
 
   // Check if `var pointee: Pointee` is settable. This is required for the
   // conformance to UnsafeCxxMutableInputIterator but is not necessary for
   // UnsafeCxxInputIterator.
   bool pointeeSettable = pointee->isSettable(nullptr);
+  
+  if (clangDecl->getIdentifier() &&
+      clangDecl->getName() == "__normal_iterator") {
+    llvm::errs() << "//// conforming __normal_iterator to UnsafeCxxIter: checking successor\n";
+  }
 
   // Check if present: `func successor() -> Self`
   auto successorId = ctx.getIdentifier("successor");
@@ -526,6 +545,11 @@ void swift::conformToCxxIteratorIfNeeded(
   auto successorTy = successor->getResultInterfaceType();
   if (!successorTy || successorTy->getAnyNominal() != decl)
     return;
+  
+  if (clangDecl->getIdentifier() &&
+      clangDecl->getName() == "__normal_iterator") {
+    llvm::errs() << "//// conforming __normal_iterator to UnsafeCxxIter: checking ==\n";
+  }
 
   // Check if present: `func ==`
   auto equalEqual = getEqualEqualOperator(decl);
@@ -551,6 +575,11 @@ void swift::conformToCxxIteratorIfNeeded(
   }
   if (!equalEqual)
     return;
+  
+  if (clangDecl->getIdentifier() &&
+      clangDecl->getName() == "__normal_iterator") {
+    llvm::errs() << "//// conforming __normal_iterator to UnsafeCxxIter: done for input\n";
+  }
 
   impl.addSynthesizedTypealias(decl, ctx.getIdentifier("Pointee"),
                                pointee->getTypeInContext());
@@ -566,6 +595,10 @@ void swift::conformToCxxIteratorIfNeeded(
     return;
 
   // Try to conform to UnsafeCxxRandomAccessIterator if possible.
+  if (clangDecl->getIdentifier() &&
+      clangDecl->getName() == "__normal_iterator") {
+    llvm::errs() << "//// conforming __normal_iterator to UnsafeCxxIter: trying rac\n";
+  }
 
   // Check if present: `func -`
   auto minus = getMinusOperator(decl);
@@ -1084,8 +1117,11 @@ void swift::conformToCxxVectorIfNeeded(ClangImporter::Implementation &impl,
   auto rawIteratorTy = iterType->getUnderlyingType();
 
   // Check if RawIterator conforms to UnsafeCxxRandomAccessIterator.
-  if (!checkConformance(rawIteratorTy, cxxRandomAccessIteratorProto))
+  if (!checkConformance(rawIteratorTy, cxxRandomAccessIteratorProto)) {
+    llvm::errs() << "!!! !!! !!! RawIterator does not conform:\n";
+    rawIteratorTy->getAnyNominal()->dump(llvm::errs());
     return;
+  }
 
   impl.addSynthesizedTypealias(decl, ctx.Id_Element,
                                valueType->getUnderlyingType());
