@@ -3210,6 +3210,19 @@ static bool diagnoseTypedThrowsAvailability(
       ReferenceDC);
 }
 
+static void diagnoseNonRuntimeProtocol(TypeDecl *D) {
+  if (auto *ClangD = D->getClangDecl()){
+    auto *proto = dyn_cast<clang::ObjCProtocolDecl>(ClangD);
+    if (!proto || !proto->isNonRuntimeProtocol())
+      return;
+    auto *clangImporter = static_cast<ClangImporter *>(D->getASTContext().getClangModuleLoader());
+    assert(clangImporter && "Must have a clang importer");
+    D->getASTContext().Diags.diagnose(
+        clangImporter->importSourceLocation(proto->getAttr<clang::ObjCNonRuntimeProtocolAttr>()->getLocation()), diag::non_runtime_objc_protocol_metadata_not_available,
+        D->getNameStr());
+  }
+}
+
 /// Make sure the generic arguments conform to all known invertible protocols.
 /// Runtimes prior to NoncopyableGenerics do not check if any of the
 /// generic arguments conform to Copyable/Escapable during dynamic casts.
@@ -4475,6 +4488,8 @@ public:
     // already checked on the TypeRepr.
     if (Where.mustOnlyReferenceExportedDecls())
       TypeChecker::diagnoseDeclRefExportability(Loc, decl, Where);
+
+    diagnoseNonRuntimeProtocol(decl);
   }
 
   Action visitNominalType(NominalType *ty) override {
