@@ -212,7 +212,7 @@ namespace {
 
       auto &mangledName = MangledNameCache[nominal];
       if (mangledName.empty())
-        mangledName = Mangle::ASTMangler().mangleNominalType(nominal);
+        mangledName = Mangle::ASTMangler(nominal->getASTContext()).mangleNominalType(nominal);
 
       assert(llvm::isUInt<31>(mangledName.size()));
       if (dataToWrite)
@@ -6616,7 +6616,7 @@ static void recordDerivativeFunctionConfig(
     Serializer &S, const AbstractFunctionDecl *AFD,
     Serializer::UniquedDerivativeFunctionConfigTable &derivativeConfigs) {
   auto &ctx = AFD->getASTContext();
-  Mangle::ASTMangler Mangler;
+  Mangle::ASTMangler Mangler(AFD->getASTContext());
   for (auto *attr : AFD->getAttrs().getAttributes<DifferentiableAttr>()) {
     auto mangledName = ctx.getIdentifier(Mangler.mangleDeclAsUSR(AFD, ""));
     derivativeConfigs[mangledName].insert(
@@ -6654,7 +6654,7 @@ static void collectInterestingNestedDeclarations(
 
       if (auto owningType = func->getDeclContext()->getSelfNominalTypeDecl()) {
         if (func->isObjC()) {
-          Mangle::ASTMangler mangler;
+          Mangle::ASTMangler mangler(func->getASTContext());
           std::string ownerName = mangler.mangleNominalType(owningType);
           assert(!ownerName.empty() && "Mangled type came back empty!");
 
@@ -6827,9 +6827,6 @@ void Serializer::writeAST(ModuleOrSourceFile DC) {
       if (TD->getDeclContext()->getInnermostSkippedFunctionContext())
         continue;
 
-      hasLocalTypes = true;
-      Mangle::ASTMangler Mangler;
-
       std::string MangledName =
           evaluateOrDefault(M->getASTContext().evaluator,
                             MangleLocalTypeDeclRequest { TD },
@@ -6860,7 +6857,7 @@ void Serializer::writeAST(ModuleOrSourceFile DC) {
         continue;
 
       hasOpaqueReturnTypes = true;
-      Mangle::ASTMangler Mangler;
+      Mangle::ASTMangler Mangler(OTD->getASTContext());
       auto MangledName = Mangler.mangleOpaqueTypeDecl(OTD);
       opaqueReturnTypeGenerator.insert(MangledName, addDeclRef(OTD));
     }
