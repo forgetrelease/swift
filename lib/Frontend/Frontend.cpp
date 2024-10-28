@@ -1491,6 +1491,11 @@ ModuleDecl *CompilerInstance::getMainModule() const {
     if (Invocation.getSILOptions().EnableSerializePackage)
       MainModule->setSerializePackageEnabled();
 
+    if (auto compilerVersion =
+            Invocation.getFrontendOptions().SwiftCompilerVersion) {
+      MainModule->setSwiftCompilerVersion(compilerVersion);
+    }
+
     // Register the main module with the AST context.
     Context->addLoadedModule(MainModule);
     Context->MainModule = MainModule;

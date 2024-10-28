@@ -299,6 +299,20 @@ bool ArgsToFrontendOptionsConverter::convert(
   if (const Arg *A = Args.getLastArg(OPT_public_module_name))
     Opts.PublicModuleName = A->getValue();
 
+  if (auto A = Args.getLastArg(OPT_swift_compiler_version)) {
+    if (Opts.SwiftCompilerVersion.tryParse(A->getValue())) {
+      Diags.diagnose(SourceLoc(), diag::error_invalid_arg_value,
+                     A->getAsString(Args), A->getValue());
+    }
+  // If swiftinterface doesn't have a flag, let's not set the version
+  // to the current compiler version here. This helps us to identify
+  // swiftmodules built from swiftinterface generated before introduction
+  // of `-swift-compiler-version` flag.
+  } else if (Opts.InputMode !=
+             FrontendOptions::ParseInputMode::SwiftModuleInterface) {
+    Opts.SwiftCompilerVersion.tryParse(version::getCompilerVersion());
+  }
+
   // This must be called after computing module name, module abi name,
   // and module link name. If computing module aliases is unsuccessful,
   // return early.
